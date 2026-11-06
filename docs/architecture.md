@@ -27,6 +27,63 @@ web (Next.js + Auth.js) ──Bearer JWT (via /api/proxy)──▶ api (ASP.NET 
 | `infra/` | Terraform for the droplet that hosts the POC, with its own state, separate from the catalog. |
 | `workspaces/<requestId>/` | A per-request copy of the module, its tfvars and its state. Runtime only, gitignored. |
 
+## API layout
+
+```
+api/
+├── ResourceProvisioner.slnx
+├── Directory.Build.props        # net10.0, nullable, implicit usings for every project
+├── Directory.Packages.props     # Central Package Management: every NuGet version lives here
+├── .config/dotnet-tools.json    # dotnet-ef, pinned to the EF Core version
+├── src/ResourceProvisioner.Api/
+│   ├── Program.cs               # minimal API host: options, DbContext, GET /health
+│   ├── Config/                  # typed options, one class per config section
+│   ├── Data/                    # AppDbContext, design-time factory, Migrations/
+│   └── Extensions/              # service registration helpers
+└── tests/ResourceProvisioner.Api.Tests/
+    └── Fixtures/ApiFactory.cs   # WebApplicationFactory on in-memory SQLite
+```
+
+Run it from `api/`:
+
+```bash
+dotnet tool restore                                   # installs dotnet-ef
+dotnet run --project src/ResourceProvisioner.Api      # http://localhost:5000/health
+dotnet test
+dotnet ef database update --project src/ResourceProvisioner.Api
+```
+
+Migrations are **not** applied at startup; run `dotnet ef database update` after pulling a new migration. Add one
+with `dotnet ef migrations add <Name> --project src/ResourceProvisioner.Api -o Data/Migrations`.
+
+### Configuration
+
+Options are bound from configuration and validated when the app starts, so an invalid value stops startup. Secrets
+may be empty at startup; the features that use them check for them.
+
+| Key | Default | Secret |
+| --- | --- | --- |
+| `ConnectionStrings:DefaultConnection` | none | yes |
+| `Anthropic:ApiKey` | none | yes |
+| `Anthropic:Model` | `claude-sonnet-5-5` | no |
+| `Anthropic:Effort` | `low` (`low`, `medium`, `high`, `xhigh` or `max`) | no |
+| `DigitalOcean:Token` | none | yes |
+| `Spaces:AccessId` / `Spaces:SecretKey` | none | yes |
+| `Workspaces:Root` | `workspaces` (relative to the working directory) | no |
+| `Limits:MaxActiveRequestsPerUser` | `3` | no |
+| `Limits:MaxActiveRequestsTotal` | `10` | no |
+| `Limits:ChatMessagesPerMinute` | `10` | no |
+
+Secrets never go in `appsettings*.json`. Locally they live in user-secrets, from `api/`:
+
+```bash
+dotnet user-secrets --project src/ResourceProvisioner.Api set "ConnectionStrings:DefaultConnection" "Host=localhost;Database=resource_provisioner;Username=<user>;Password=<password>"
+dotnet user-secrets --project src/ResourceProvisioner.Api set "Anthropic:ApiKey" "<key>"
+dotnet user-secrets --project src/ResourceProvisioner.Api set "DigitalOcean:Token" "<token>"
+```
+
+When deployed they come from environment variables (`Anthropic__ApiKey` and so on).
+
 ## Key design rules
 
 1. **The LLM never writes HCL and never triggers provisioning.** It picks a type from the vetted catalog and fills in
