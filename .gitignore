@@ -1,0 +1,54 @@
+# ============================================================
+# Next.js / Node
+# ============================================================
+node_modules/
+.next/
+out/
+npm-debug.log*
+*.tsbuildinfo
+next-env.d.ts
+
+# ============================================================
+# .NET / C#
+# ============================================================
+**/bin/
+**/obj/
+*.user
+*.suo
+.vs/
+publish/
+*.nupkg
+*.snupkg
+TestResults/
+coverage/
+
+# ============================================================
+# Terraform
+# ============================================================
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Per-request module copies, tfvars and state written by the runner
+workspaces/
+
+# ============================================================
+# Secrets / environment
+# ============================================================
+.env*
+!.env.example
+
+# ============================================================
+# Misc
+# ============================================================
+.DS_Store
+Thumbs.db
+*.log
+.idea/
