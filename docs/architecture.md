@@ -77,7 +77,7 @@ may be empty at startup; the features that use them check for them.
 Secrets never go in `appsettings*.json`. Locally they live in user-secrets, from `api/`:
 
 ```bash
-dotnet user-secrets --project src/ResourceProvisioner.Api set "ConnectionStrings:DefaultConnection" "Host=localhost;Database=resource_provisioner;Username=<user>;Password=<password>"
+dotnet user-secrets --project src/ResourceProvisioner.Api set "ConnectionStrings:DefaultConnection" "Host=localhost;Port=5432;Database=resource_provisioner;Username=rp;Password=dev_password"
 dotnet user-secrets --project src/ResourceProvisioner.Api set "Anthropic:ApiKey" "<key>"
 dotnet user-secrets --project src/ResourceProvisioner.Api set "DigitalOcean:Token" "<token>"
 ```
