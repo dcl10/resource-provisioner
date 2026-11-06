@@ -200,11 +200,12 @@ No API or agent code changes.
 
 ## Current types
 
-Droplet (#10), managed Postgres (#11) and Spaces bucket (#13) are planned; each adds a row to this table.
+Droplet (#10) and managed Postgres (#11) are planned; each adds a row to this table.
 
 | ID | What it is |
 | --- | --- |
 | `firewall` | A free Cloud Firewall on up to five of the user's own droplets, named by their request IDs: typed inbound rules, outbound open to anywhere unless set. See [Cloud Firewall](#cloud-firewall). |
+| `spaces-bucket` | A private Spaces (S3-compatible) bucket in one of six regions, with an access key limited to that bucket. Part of the account's $5 a month Spaces subscription. See [Spaces bucket](#spaces-bucket). |
 
 ### Cloud Firewall
 
@@ -230,3 +231,40 @@ Droplet (#10), managed Postgres (#11) and Spaces bucket (#13) are planned; each 
   tracked by its request only.
 - **Name:** `<name>-<rp_name_suffix>`; `name` is at most 54 characters, keeping the whole within 63.
 - **Outputs:** `id`, `status`, `target_tags`.
+
+### Spaces bucket
+
+Checked on 2026-11-06 against DigitalOcean's Spaces docs ([create a bucket](https://docs.digitalocean.com/products/spaces/how-to/create/),
+[limits](https://docs.digitalocean.com/products/spaces/details/limits/),
+[pricing](https://docs.digitalocean.com/products/spaces/details/pricing/),
+[availability](https://docs.digitalocean.com/products/spaces/details/availability/),
+[access keys](https://docs.digitalocean.com/products/spaces/how-to/manage-access/)) and the provider's
+[`digitalocean_spaces_bucket`](https://registry.terraform.io/providers/digitalocean/digitalocean/latest/docs/resources/spaces_bucket)
+and [`digitalocean_spaces_key`](https://registry.terraform.io/providers/digitalocean/digitalocean/latest/docs/resources/spaces_key).
+
+- **Credentials:** the bucket is created with the account's Spaces keys, which the provider reads from
+  `SPACES_ACCESS_KEY_ID` and `SPACES_SECRET_ACCESS_KEY` (the runner sets them from `Spaces:AccessId` /
+  `Spaces:SecretKey`; they must be a full-access key, since only those can create buckets). The bucket's own key is
+  created through the API with `DIGITALOCEAN_TOKEN`.
+- **Access for the user:** the account's keys reach every bucket, so they are never handed out. Instead the module
+  creates a `digitalocean_spaces_key` with one `readwrite` grant on this bucket (read, write and delete objects in it,
+  nothing else) and returns it as the sensitive `access_key_id` and `secret_access_key` outputs. A bucket with a
+  per-bucket key can't also use an S3 bucket policy. DigitalOcean allows 200 keys and 100 buckets per account.
+- **Private only:** `acl` is always `private` and isn't a variable. `public-read` would make the bucket's listing
+  public; users who need a public file can share a presigned URL instead.
+- **Name:** `<name>-<rp_name_suffix>`. Bucket names are unique across all of DigitalOcean and become a DNS name
+  (`<bucket>.<region>.digitaloceanspaces.com`): 3 to 63 lowercase letters, digits and hyphens, starting with a letter
+  or digit. `name` is 3 to 54 characters and also ends with a letter or digit; the suffix makes a clash with another
+  account's bucket unlikely. A deleted bucket's name stays reserved for a week.
+- **Regions:** `nyc3` (default), `sfo3`, `ams3`, `lon1`, `fra1`, `sgp1`, the same six as the other types. The price
+  is the same everywhere.
+- **Cost:** Spaces is a $5 a month subscription on the account, covering 250 GiB of storage and 1 TiB of outbound
+  transfer across all buckets, then $0.02 per GiB stored and $0.01 per GiB transferred. It's billed while any bucket
+  exists, so the first bucket in the account costs $5 a month and the rest share it. The `description` tells the
+  agent to say so.
+- **Destroy:** `force_destroy = true`, so destroying the request deletes the bucket's objects too, rather than failing
+  and leaving a billed bucket behind.
+- **`rp_tags` is declared but unused:** neither `digitalocean_spaces_bucket` nor `digitalocean_spaces_key` takes tags.
+  Ownership of a bucket is tracked by its request only.
+- **Outputs:** `name`, `region`, `bucket_domain_name`, `endpoint` (use `https://<endpoint>` as the S3 endpoint URL),
+  and the sensitive `access_key_id` and `secret_access_key`.
