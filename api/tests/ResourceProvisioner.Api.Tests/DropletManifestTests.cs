@@ -75,6 +75,28 @@ public class DropletManifestTests
     Assert.Equal(["Unknown field."], result.Errors["rp_tags"]);
   }
 
+  [Fact]
+  public void ValidateVariables_RejectsNameSuffix_WhenSetByRequest()
+  {
+    var input = new JsonObject { ["name"] = "web-1", ["ssh_public_key"] = Ed25519Key, ["rp_name_suffix"] = "abc" };
+
+    var result = _catalog.ValidateVariables("droplet", input);
+
+    Assert.Equal(["Unknown field."], result.Errors["rp_name_suffix"]);
+  }
+
+  [Theory]
+  [InlineData(54, true)]
+  [InlineData(55, false)]
+  public void ValidateVariables_LeavesRoomForSuffix_WhenCheckingNameLength(int length, bool valid)
+  {
+    var input = new JsonObject { ["name"] = new string('a', length), ["ssh_public_key"] = Ed25519Key };
+
+    var result = _catalog.ValidateVariables("droplet", input);
+
+    Assert.Equal(valid, result.IsValid);
+  }
+
   private static string FindRepoRoot()
   {
     var dir = new DirectoryInfo(AppContext.BaseDirectory);
