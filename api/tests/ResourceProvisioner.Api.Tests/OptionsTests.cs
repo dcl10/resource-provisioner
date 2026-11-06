@@ -41,6 +41,7 @@ public class OptionsTests(ApiFactory factory) : IClassFixture<ApiFactory>
   [InlineData("Anthropic:Effort", "extreme")]
   [InlineData("Anthropic:Model", "")]
   [InlineData("Limits:MaxActiveRequestsPerUser", "0")]
+  [InlineData("Catalog:Root", "")]
   [InlineData("Workspaces:Root", "")]
   public void StartupValidation_Fails_WhenOptionIsInvalid(string key, string value)
   {
