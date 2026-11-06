@@ -61,6 +61,88 @@ namespace ResourceProvisioner.Api.Data.Migrations
 
                     b.ToTable("Invitations");
                 });
+
+            modelBuilder.Entity("ResourceProvisioner.Api.Models.ProvisioningRequest", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("ConfirmedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ConversationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Outputs")
+                        .HasColumnType("text");
+
+                    b.Property<string>("OwnerEmail")
+                        .HasMaxLength(254)
+                        .HasColumnType("character varying(254)");
+
+                    b.Property<string>("OwnerId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Status")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Variables")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OwnerId");
+
+                    b.HasIndex("Status");
+
+                    b.ToTable("ProvisioningRequests");
+                });
+
+            modelBuilder.Entity("ResourceProvisioner.Api.Models.RequestSensitiveOutputs", b =>
+                {
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Values")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("RequestId");
+
+                    b.ToTable("RequestSensitiveOutputs", (string)null);
+                });
+
+            modelBuilder.Entity("ResourceProvisioner.Api.Models.RequestSensitiveOutputs", b =>
+                {
+                    b.HasOne("ResourceProvisioner.Api.Models.ProvisioningRequest", null)
+                        .WithOne("SensitiveOutputs")
+                        .HasForeignKey("ResourceProvisioner.Api.Models.RequestSensitiveOutputs", "RequestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("ResourceProvisioner.Api.Models.ProvisioningRequest", b =>
+                {
+                    b.Navigation("SensitiveOutputs");
+                });
 #pragma warning restore 612, 618
         }
     }

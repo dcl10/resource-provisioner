@@ -31,8 +31,89 @@ internal static partial class ManifestChecker
 
     CheckFields(manifest.Variables, "variables", "", topLevel: true, problems);
     CheckOutputs(manifest.Outputs, problems);
+    CheckDropletReferences(manifest.Variables, problems);
+    CheckAtLeastOneOf(manifest, problems);
 
     return problems;
+  }
+
+  /// <summary>
+  /// Whether a variable references the user's own droplets by request ID, by its name: <c>droplet_request_ids</c>
+  /// or <c>&lt;purpose&gt;_droplet_request_ids</c>. The API checks every ID in such a variable belongs to a
+  /// provisioned droplet of the requesting user's.
+  /// </summary>
+  /// <param name="name">The variable's name.</param>
+  /// <returns>True for a droplet-reference variable.</returns>
+  public static bool IsDropletReference(string name) =>
+    name == DropletReferenceName || name.EndsWith($"_{DropletReferenceName}", StringComparison.Ordinal);
+
+  private const string DropletReferenceName = "droplet_request_ids";
+
+  // The ownership check reads top-level arrays of strings only, so a reference anywhere else would go unchecked.
+  private static void CheckDropletReferences(IReadOnlyList<VariableSpec> variables, List<string> problems)
+  {
+    foreach (var variable in variables.OfType<VariableSpec>())
+    {
+      if (IsDropletReference(variable.Name) &&
+          (variable.Type != VariableType.Array || variable.Items?.Type != VariableType.String))
+      {
+        problems.Add($"{variable.Name}: a droplet reference must be an array of strings (request IDs).");
+      }
+
+      foreach (var field in NestedFields(variable).Where(f => IsDropletReference(f.Name)))
+      {
+        problems.Add($"{variable.Name}: droplet references ({field.Name}) must be top-level variables.");
+      }
+    }
+  }
+
+  private static IEnumerable<VariableSpec> NestedFields(ValueSpec spec)
+  {
+    var properties = spec.Properties ?? spec.Items?.Properties ?? [];
+    foreach (var field in properties.OfType<VariableSpec>())
+    {
+      yield return field;
+      foreach (var nested in NestedFields(field))
+      {
+        yield return nested;
+      }
+    }
+  }
+
+  private static void CheckAtLeastOneOf(ResourceManifest manifest, List<string> problems)
+  {
+    var groups = manifest.AtLeastOneOf ?? [];
+    for (var i = 0; i < groups.Count; i++)
+    {
+      var path = $"atLeastOneOf[{i}]";
+      if (groups[i] is not { } group || group.Count < 2)
+      {
+        problems.Add($"{path}: name at least two variables.");
+        continue;
+      }
+
+      if (group.Distinct().Count() != group.Count)
+      {
+        problems.Add($"{path}: a variable is listed more than once.");
+      }
+
+      foreach (var name in group)
+      {
+        var variable = manifest.Variables.OfType<VariableSpec>().FirstOrDefault(v => v.Name == name);
+        if (variable is null)
+        {
+          problems.Add($"{path}: '{name}' is not a variable.");
+        }
+        else if (variable.Required)
+        {
+          problems.Add($"{path}: '{name}' is required, so the rule always holds.");
+        }
+        else if (variable.Sensitive)
+        {
+          problems.Add($"{path}: '{name}' is sensitive, so the agent can't set it.");
+        }
+      }
+    }
   }
 
   private static void CheckFields(

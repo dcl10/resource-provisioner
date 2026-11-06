@@ -22,7 +22,9 @@ public class CatalogControllerTests(ApiFactory factory) : IClassFixture<ApiFacto
 
     Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     var types = JsonNode.Parse(await response.Content.ReadAsStringAsync())!.AsArray();
-    Assert.Equal(["test-firewall", "test-server"], types.Select(t => t!["id"]!.GetValue<string>()));
+    Assert.Equal(
+      ["test-database", "test-firewall", "test-server"],
+      types.Select(t => t!["id"]!.GetValue<string>()));
   }
 
   [Fact]
@@ -49,5 +51,18 @@ public class CatalogControllerTests(ApiFactory factory) : IClassFixture<ApiFacto
     var firewall = JsonNode.Parse(json)!.AsArray().Single(t => t!["id"]!.GetValue<string>() == "test-firewall")!;
     var properties = firewall["variables"]![0]!["items"]!["properties"]!.AsArray();
     Assert.Equal(["protocol", "port", "sources"], properties.Select(p => p!["name"]!.GetValue<string>()));
+  }
+
+  [Fact]
+  public async Task GetCatalog_SerializesAtLeastOneOf_OnlyWhenSet()
+  {
+    var types = JsonNode.Parse(await factory.CreateUserClient().GetStringAsync("/api/catalog"))!.AsArray();
+
+    var database = types.Single(t => t!["id"]!.GetValue<string>() == "test-database")!;
+    var group = Assert.Single(database["atLeastOneOf"]!.AsArray())!.AsArray();
+    Assert.Equal(["allowed_droplet_request_ids", "allowed_ip_addresses"], group.Select(n => n!.GetValue<string>()));
+
+    var server = types.Single(t => t!["id"]!.GetValue<string>() == "test-server")!;
+    Assert.False(server.AsObject().ContainsKey("atLeastOneOf"));
   }
 }

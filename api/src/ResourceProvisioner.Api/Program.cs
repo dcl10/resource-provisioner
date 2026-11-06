@@ -19,6 +19,9 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 // Resource types from catalog/<type>/resource.json, loaded at startup; an invalid manifest stops the app.
 builder.Services.AddCatalog();
 
+// Provisioning requests: proposed by the agent, confirmed or cancelled by their owner, within the active limits.
+builder.Services.AddProvisioningRequests();
+
 builder.Services.AddControllers();
 builder.Services.AddHealthChecks();
 

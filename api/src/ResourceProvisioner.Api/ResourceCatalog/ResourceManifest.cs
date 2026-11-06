@@ -1,5 +1,7 @@
 namespace ResourceProvisioner.Api.ResourceCatalog;
 
+using System.Text.Json.Serialization;
+
 /// <summary>
 /// A resource type's <c>resource.json</c>: the single source of truth for the agent's tool schemas, server-side
 /// validation and the confirmation summary.
@@ -23,4 +25,11 @@ public record ResourceManifest
 
   /// <summary>Every output in <c>outputs.tf</c>, with which ones are secrets.</summary>
   public IReadOnlyList<OutputSpec> Outputs { get; init; } = [];
+
+  /// <summary>
+  /// Rules across variables: each entry names two or more top-level variables, at least one of which a request must
+  /// set (not null, an empty string or an empty array, after defaults). Null when the type has none.
+  /// </summary>
+  [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+  public IReadOnlyList<IReadOnlyList<string>>? AtLeastOneOf { get; init; }
 }

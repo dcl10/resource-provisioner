@@ -10,6 +10,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
   /// <summary>Invitations sent by admins.</summary>
   public DbSet<Invitation> Invitations => Set<Invitation>();
 
+  /// <summary>Provisioning requests, one per resource a user asked for.</summary>
+  public DbSet<ProvisioningRequest> ProvisioningRequests => Set<ProvisioningRequest>();
+
+  /// <summary>
+  /// Sensitive Terraform outputs, one row per provisioned request that has any. Read only through an explicit reveal.
+  /// </summary>
+  public DbSet<RequestSensitiveOutputs> RequestSensitiveOutputs => Set<RequestSensitiveOutputs>();
+
   /// <inheritdoc />
   protected override void OnModelCreating(ModelBuilder modelBuilder)
   {
@@ -22,6 +30,31 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
       // Not unique: an address whose Keycloak user was deleted can be invited again.
       invitation.HasIndex(x => x.Email);
       invitation.HasIndex(x => x.KeycloakUserId).IsUnique();
+    });
+
+    modelBuilder.Entity<ProvisioningRequest>(request =>
+    {
+      request.Property(x => x.OwnerId).HasMaxLength(64);
+      request.Property(x => x.OwnerEmail).HasMaxLength(254);
+      request.Property(x => x.Type).HasMaxLength(64);
+
+      // By name, so the column reads well and a reordered enum can't change stored statuses. A concurrency token, so
+      // a confirm racing a cancel (or the runner) fails instead of both writing.
+      request.Property(x => x.Status).HasConversion<string>().HasMaxLength(32).IsConcurrencyToken();
+
+      request.HasIndex(x => x.OwnerId);
+      request.HasIndex(x => x.Status);
+
+      request.HasOne(x => x.SensitiveOutputs)
+        .WithOne()
+        .HasForeignKey<RequestSensitiveOutputs>(x => x.RequestId)
+        .OnDelete(DeleteBehavior.Cascade);
+    });
+
+    modelBuilder.Entity<RequestSensitiveOutputs>(outputs =>
+    {
+      outputs.ToTable("RequestSensitiveOutputs");
+      outputs.HasKey(x => x.RequestId);
     });
   }
 }

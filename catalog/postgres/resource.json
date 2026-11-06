@@ -84,6 +84,9 @@
       }
     }
   ],
+  "atLeastOneOf": [
+    ["allowed_droplet_request_ids", "allowed_ip_addresses"]
+  ],
   "outputs": [
     { "name": "id", "description": "Database cluster ID." },
     { "name": "host", "description": "Public hostname to connect to, reachable only from the allowed droplets and IP addresses." },

@@ -25,7 +25,7 @@ public class CatalogStartupCheckTests
 
     await StartCatalogCheck(provider);
 
-    Assert.Equal(2, provider.GetRequiredService<ICatalogService>().Types.Count);
+    Assert.Equal(3, provider.GetRequiredService<ICatalogService>().Types.Count);
   }
 
   [Fact]

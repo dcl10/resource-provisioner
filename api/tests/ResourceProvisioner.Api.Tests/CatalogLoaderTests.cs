@@ -15,7 +15,7 @@ public sealed class CatalogLoaderTests : IDisposable
   {
     var entries = CatalogLoader.Load(ApiFactory.FixtureCatalogRoot);
 
-    Assert.Equal(["test-firewall", "test-server"], entries.Select(e => e.Manifest.Id));
+    Assert.Equal(["test-database", "test-firewall", "test-server"], entries.Select(e => e.Manifest.Id));
     Assert.All(entries, e => Assert.True(File.Exists(Path.Combine(e.ModuleDirectory, "main.tf"))));
   }
 
@@ -289,6 +289,71 @@ public sealed class CatalogLoaderTests : IDisposable
     _catalog.AddType("sample", outputsTf: "output \"id\" {\n  value     = \"x\"\n  sensitive = true\n}\n");
 
     AssertLoadFails("outputs.id: sensitive is false in resource.json but true in outputs.tf");
+  }
+
+  [Theory]
+  [InlineData("""[["a"]]""", "atLeastOneOf[0]: name at least two variables")]
+  [InlineData("""[["a", "a"]]""", "atLeastOneOf[0]: a variable is listed more than once")]
+  [InlineData("""[["a", "missing"]]""", "atLeastOneOf[0]: 'missing' is not a variable")]
+  [InlineData("""[["a", "name"]]""", "atLeastOneOf[0]: 'name' is required, so the rule always holds")]
+  [InlineData("""[["a", "secret"]]""", "atLeastOneOf[0]: 'secret' is sensitive, so the agent can't set it")]
+  public void Load_Throws_WhenAtLeastOneOfIsInvalid(string groups, string expected)
+  {
+    _catalog.AddType(
+      "sample",
+      $$"""
+        {
+          "id": "sample", "displayName": "S", "description": "D", "costHint": "C",
+          "variables": [
+            { "name": "name", "type": "string", "description": "d", "required": true },
+            { "name": "a", "type": "string", "description": "d" },
+            { "name": "secret", "type": "string", "description": "d", "sensitive": true }
+          ],
+          "atLeastOneOf": {{groups}},
+          "outputs": [{ "name": "id", "description": "ID." }]
+        }
+        """,
+      """
+        variable "name" {
+        }
+
+        variable "a" {
+        }
+
+        variable "secret" {
+          sensitive = true
+        }
+
+        """);
+
+    AssertLoadFails(expected);
+  }
+
+  [Theory]
+  [InlineData("""{ "name": "v_droplet_request_ids", "type": "string", "description": "d" }""",
+    "v_droplet_request_ids", "a droplet reference must be an array of strings")]
+  [InlineData("""{ "name": "droplet_request_ids", "type": "array", "description": "d", "items": { "type": "integer" } }""",
+    "droplet_request_ids", "a droplet reference must be an array of strings")]
+  [InlineData("""
+    { "name": "v", "type": "array", "description": "d",
+      "items": { "type": "object", "properties": [
+        { "name": "droplet_request_ids", "type": "array", "description": "d", "items": { "type": "string" } }] } }
+    """, "v", "droplet references (droplet_request_ids) must be top-level variables")]
+  public void Load_Throws_WhenDropletReferenceIsNotTopLevelArrayOfStrings(string variable, string tfName, string expected)
+  {
+    _catalog.AddTypeWithVariable(variable, tfName);
+
+    AssertLoadFails(expected);
+  }
+
+  [Fact]
+  public void Load_ParsesAtLeastOneOf_ForFixtureManifest()
+  {
+    var database = CatalogLoader.Load(ApiFactory.FixtureCatalogRoot)
+      .Single(e => e.Manifest.Id == "test-database").Manifest;
+
+    var group = Assert.Single(database.AtLeastOneOf!);
+    Assert.Equal(["allowed_droplet_request_ids", "allowed_ip_addresses"], group);
   }
 
   [Fact]

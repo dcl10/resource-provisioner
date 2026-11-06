@@ -17,6 +17,7 @@ a folder, with no API or agent code change.
 
 - [Manifest format](#manifest-format)
 - [Variables](#variables)
+- [Rules across variables](#rules-across-variables)
 - [Outputs](#outputs)
 - [What the loader checks](#what-the-loader-checks)
 - [Validating a request's variables](#validating-a-requests-variables)
@@ -68,6 +69,7 @@ a folder, with no API or agent code change.
 | `costHint` | yes | A rough monthly cost, shown before the user confirms. |
 | `variables` | no | What a request can set. See [Variables](#variables). |
 | `outputs` | no | Every output in `outputs.tf`. See [Outputs](#outputs). |
+| `atLeastOneOf` | no | Groups of variables of which a request must set at least one. See [Rules across variables](#rules-across-variables). |
 
 Keys are camelCase and case-sensitive. An unknown key is an error, so a misspelt constraint can't be silently ignored.
 
@@ -118,17 +120,37 @@ or DigitalOcean ID. Take an array of droplet **request IDs** (`items.pattern` a 
 provider's limit), named `droplet_request_ids` or `<purpose>_droplet_request_ids`, and have the module turn each into
 its `rp-<requestId>` tag. The manifest can only check the shape, so:
 
-- **#14** must, at `propose_request` and again at confirm, reject the request unless every ID is a `droplet` request
-  owned by the requesting user (admins included) and `Succeeded`.
+- The API, at `propose_request` and again at confirm, rejects the request unless every ID is a `droplet` request
+  owned by the requesting user (admins included) and `Succeeded`. See
+  [architecture.md](architecture.md#ownership). It finds these variables by name, so the loader requires them to be
+  top-level arrays of strings.
 - **#17**'s `list_my_resources` must return the request ID and type of the user's own resources only.
 
 A free-form tag would let a user name another user's `rp-<requestId>` or the shared `resource-provisioner` tag. Request
 IDs are never reused, so a tag can't later match someone else's droplet.
 
-**Rules across variables** ("at least one of these two lists") can't be written in a manifest. Say the rule in each
-variable's `description` and enforce it in Terraform: a `lifecycle` `precondition` (variable `validation` can only
-refer to other variables from Terraform 1.9). It then fails at plan, after confirm, so #14 may want to check it at
-`propose_request` too.
+## Rules across variables
+
+Some rules involve more than one variable, such as a database that needs at least one trusted source from either of
+two lists. Keywords on a single variable can't say that, so the manifest has one top-level rule for it:
+
+```json
+"atLeastOneOf": [
+  ["allowed_droplet_request_ids", "allowed_ip_addresses"]
+]
+```
+
+Each group names two or more top-level variables; a request must **set** at least one of them, after defaults are
+applied. Set means not `null`, not an empty string and not an empty array. `ValidateVariables` checks it, so a
+request breaking it is refused at `propose_request` and again at confirm, instead of failing at `terraform plan` after
+the user confirmed. The error goes on every variable in the group (`Give at least one of a, b.`). A group is skipped
+while one of its variables has its own errors, so a malformed value isn't also reported as missing.
+
+Tool schemas can't express it either, so say the rule in each variable's `description` as well. Enforcing it in
+Terraform too (a `lifecycle` `precondition`) is still a good idea, as a last line of defence.
+
+Only `atLeastOneOf` exists; add another rule kind the same way when a module needs one, rather than writing per-type
+code, so adding a resource type stays a folder-only change.
 
 ## Outputs
 
@@ -149,6 +171,10 @@ invalid, listing every problem in every manifest. Hidden folders (`.terraform/`)
 - arrays have `items`, objects have `properties`
 - `required` and `default` aren't combined; sensitive variables are top-level, not required and not defaulted
 - every default passes its own variable's constraints
+- each `atLeastOneOf` group names at least two distinct top-level variables that exist and are neither required (the
+  rule would always hold) nor sensitive (the agent can't set them)
+- variables named `droplet_request_ids` or `*_droplet_request_ids` are top-level arrays of strings, so the ownership
+  check can find and read them
 - every manifest variable is declared in `variables.tf`, the outputs match `outputs.tf` exactly, and `sensitive`
   agrees on both sides. This reads `terraform fmt`-formatted files (top-level blocks close with `}` in column 0); it
   is not a full HCL parser.
@@ -161,8 +187,8 @@ bad manifest fails CI rather than a deploy.
 `Catalog:Root` (default `catalog`). An absolute path is used as-is. A relative path is looked for in the content root
 (the project folder under `dotnet run`) and then each folder above it, so the default finds the repo's `catalog/`
 wherever in the repo the API starts. Deployments (#21) set it explicitly. Tests point it at the fixture catalog in
-`api/tests/ResourceProvisioner.Api.Tests/Fixtures/catalog/` (`test-server`, `test-firewall`), which covers every
-variable type and isn't a real module.
+`api/tests/ResourceProvisioner.Api.Tests/Fixtures/catalog/` (`test-server`, `test-firewall`, `test-database`), which
+covers every variable type, a droplet reference and an `atLeastOneOf` rule, and isn't a real module.
 
 ## Validating a request's variables
 
@@ -176,6 +202,8 @@ and returns:
   validation problem details. An unknown type is reported on `type`, an unknown name as `Unknown field.`
 
 A `null` value counts as not given. Every error is collected, not just the first, so the agent can fix them in one go.
+The manifest's [`atLeastOneOf`](#rules-across-variables) rules are checked here too. Whether droplet references
+belong to the user needs the database, so `IProvisioningRequestService` checks that on top.
 
 `GET /api/catalog` returns every type with its variables and outputs, in the manifest's own shape. Like every
 endpoint, it requires sign-in.
@@ -192,6 +220,7 @@ agent asks for a valid value. Mapping:
 - `allowedValues` becomes `enum`; `items` and `properties` map recursively (object fields get their own `required`
   list and `additionalProperties: false`)
 - sensitive variables and the server-only variables above are never in the schema
+- `atLeastOneOf` has no strict-mode equivalent; it is enforced on the server and stated in the descriptions
 - sensitive outputs are never put in a tool result or the prompt
 
 Because strict mode needs a fixed schema, the nesting in a manifest is finite (no recursive types).
@@ -281,9 +310,9 @@ No API or agent code changes.
     Prefixes shorter than `/8` are refused, so with 10 entries at most 10/256 of IPv4 space can be listed and
     `0.0.0.0/0` can't.
 
-  Both default to `[]`, and at least one source in total is required. The manifest can't say that (see
-  [Rules across variables](#variables)), so both descriptions state it and a `precondition` on the firewall fails the
-  plan when both are empty. DigitalOcean allows 100 rules per cluster; 20 at most stays well under.
+  Both default to `[]`, and at least one source in total is required: the manifest's `atLeastOneOf` (see
+  [Rules across variables](#rules-across-variables)) refuses a request with neither at `propose_request` and confirm,
+  both descriptions state it for the agent, and a `precondition` on the firewall still fails the plan as a backstop. DigitalOcean allows 100 rules per cluster; 20 at most stays well under.
 - **Outputs:** `id`, `host`, `port`, `database`, `user` and the sensitive `password` and `uri` are always the app
   user's. `uri` is built in `outputs.tf` (`postgresql://user:password@host:port/database?sslmode=require`) because
   the cluster's own `uri` is for `doadmin`. The sensitive `admin_password` and `admin_uri` (`doadmin` on `defaultdb`)
