@@ -104,6 +104,22 @@ masked in summaries, so a sensitive variable can't be `required` (the agent coul
 `variables.tf` but left out of the manifest, so neither the user nor the LLM can set them. Give them a default in
 Terraform.
 
+- `rp_name_suffix` (`string`, default `""`): a short value from the request ID (up to 8 lowercase letters or digits).
+  The resource's DigitalOcean name is `<name>-<rp_name_suffix>`, so names never clash in the shared account. Set the
+  manifest's `name` `maxLength` to the resource's name limit minus 9 (for `-` and the suffix).
+
+**Referencing the user's own droplets** (a firewall's targets, a database's trusted sources): never take a tag, name
+or DigitalOcean ID. Take an array of droplet **request IDs** (`items.pattern` a lowercase GUID, `maxItems` the
+provider's limit), named `droplet_request_ids` or `<purpose>_droplet_request_ids`, and have the module turn each into
+its `rp-<requestId>` tag. The manifest can only check the shape, so:
+
+- **#14** must, at `propose_request` and again at confirm, reject the request unless every ID is a `droplet` request
+  owned by the requesting user (admins included) and `Succeeded`.
+- **#17**'s `list_my_resources` must return the request ID and type of the user's own resources only.
+
+A free-form tag would let a user name another user's `rp-<requestId>` or the shared `resource-provisioner` tag. Request
+IDs are never reused, so a tag can't later match someone else's droplet.
+
 ## Outputs
 
 List every output in `outputs.tf`, with `name`, `description` and `sensitive`. A sensitive output (a password, a
@@ -184,8 +200,33 @@ No API or agent code changes.
 
 ## Current types
 
-None yet. Droplet (#10), managed Postgres (#11), cloud firewall (#12) and Spaces bucket (#13) are planned; each adds
-a row to this table.
+Droplet (#10), managed Postgres (#11) and Spaces bucket (#13) are planned; each adds a row to this table.
 
 | ID | What it is |
 | --- | --- |
+| `firewall` | A free Cloud Firewall on up to five of the user's own droplets, named by their request IDs: typed inbound rules, outbound open to anywhere unless set. See [Cloud Firewall](#cloud-firewall). |
+
+### Cloud Firewall
+
+- **Targets:** `droplet_request_ids`, 1 to 5, as in
+  [Referencing the user's own droplets](#variables); the firewall applies to droplets with those `rp-<requestId>` tags.
+  Five is DigitalOcean's tag limit per firewall
+  ([limits](https://docs.digitalocean.com/products/networking/firewalls/details/limits/)). Ownership is checked by #14,
+  not here.
+- **Rules:** `inbound_rules` (required, 1 to 20) and `outbound_rules` (up to 20), each a list of `protocol` (`tcp`,
+  `udp` or `icmp`), `port_range` (`22`, `8000-9000` or `all`; the module drops it for `icmp` and sends `all` as
+  `1-65535`) and `source_addresses` / `destination_addresses` (1 to 10 IPv4 or IPv6 CIDRs). Allow rules only, and
+  addresses only: the provider's `source_tags`, `source_droplet_ids` and the like are left out so a rule can't name
+  other users' resources. 40 rules at most stays under DigitalOcean's 50.
+- **Defaults:** outbound allows tcp, udp and icmp to `0.0.0.0/0` and `::/0`. A DigitalOcean firewall blocks whatever
+  no rule allows, so without that default a droplet couldn't reach DNS or package mirrors. Inbound has no default.
+- **SSH from anywhere** (`0.0.0.0/0` on port 22) is allowed. Droplets are key-only (#10), and a droplet with no
+  firewall is already open on 22, so refusing it would only push users to skip the firewall. The description tells
+  the agent to suggest the user's own `/32` and to warn when the source is anywhere.
+- **Checks:** the manifest's patterns check ports are 1 to 65535 and addresses look like CIDRs. A low-high range
+  (`9000-8000`) and malformed IPv6 pass the manifest but fail the Terraform variable validation at plan time.
+- **`rp_tags` is declared but unused.** A firewall can't carry tags: `digitalocean_firewall`'s `tags` picks the droplets
+  it applies to, so passing `rp_tags` there would attach it to every user's droplets. Ownership of a firewall is
+  tracked by its request only.
+- **Name:** `<name>-<rp_name_suffix>`; `name` is at most 54 characters, keeping the whole within 63.
+- **Outputs:** `id`, `status`, `target_tags`.
