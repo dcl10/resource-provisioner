@@ -167,5 +167,33 @@ public class CatalogServiceTests
     Assert.Empty(second.Values["tags"]!.AsArray());
   }
 
+  [Fact]
+  public void ValidateVariables_ReportsOnEveryVariable_WhenNoneOfAtLeastOneOfIsSet()
+  {
+    var result = _catalog.ValidateVariables("test-database", Parse("""{ "name": "db" }"""));
+
+    const string message = "Give at least one of allowed_droplet_request_ids, allowed_ip_addresses.";
+    Assert.Equal([message], result.Errors["allowed_droplet_request_ids"]);
+    Assert.Equal([message], result.Errors["allowed_ip_addresses"]);
+  }
+
+  [Theory]
+  [InlineData("""{ "name": "db", "allowed_ip_addresses": ["203.0.113.7/32"] }""")]
+  [InlineData("""{ "name": "db", "allowed_droplet_request_ids": ["3f2b8c1e-5d4a-4e6f-9a7b-1c2d3e4f5a6b"] }""")]
+  public void ValidateVariables_Passes_WhenOneOfAtLeastOneOfIsSet(string json)
+  {
+    Assert.True(_catalog.ValidateVariables("test-database", Parse(json)).IsValid);
+  }
+
+  [Fact]
+  public void ValidateVariables_SkipsAtLeastOneOf_WhenAVariableInItHasErrors()
+  {
+    var result = _catalog.ValidateVariables(
+      "test-database",
+      Parse("""{ "name": "db", "allowed_droplet_request_ids": ["NOT-A-GUID"] }"""));
+
+    Assert.Equal(["allowed_droplet_request_ids[0]"], result.Errors.Keys);
+  }
+
   private static JsonObject Parse(string json) => JsonNode.Parse(json)!.AsObject();
 }
