@@ -184,8 +184,37 @@ No API or agent code changes.
 
 ## Current types
 
-None yet. Droplet (#10), managed Postgres (#11), cloud firewall (#12) and Spaces bucket (#13) are planned; each adds
-a row to this table.
+Droplet (#10), managed Postgres (#11) and Spaces bucket (#13) are planned; each adds a row to this table.
 
 | ID | What it is |
 | --- | --- |
+| `firewall` | A free Cloud Firewall on up to five of the user's own droplets, named by their request IDs: typed inbound rules, outbound open to anywhere unless set. See [Cloud Firewall](#cloud-firewall). |
+
+### Cloud Firewall
+
+- **Targets:** `droplet_request_ids`, 1 to 5 droplet **request IDs** (lowercase GUIDs, from `list_my_resources`), not
+  tags or droplet IDs. The module turns each into its `rp-<requestId>` tag and the firewall applies to droplets with
+  those tags. A free-form tag would let a user name another user's `rp-<requestId>` or the shared
+  `resource-provisioner` tag, which every user's droplets carry. Five is DigitalOcean's tag limit per firewall
+  ([limits](https://docs.digitalocean.com/products/networking/firewalls/details/limits/)).
+- **Ownership is not checked here.** The manifest only checks the shape of an ID. Before a firewall request is created
+  or confirmed, **#14** must check that every ID is a request of type `droplet`, owned by the requesting user (admins
+  included: no cross-user targets), and `Succeeded`, and reject the request otherwise, at `propose_request` and again
+  at confirm. **#17**'s `list_my_resources` must return the request ID and type of only the user's own resources, so
+  the agent has the ID to give. Request IDs are never reused, so a tag can't later match someone else's droplet.
+- **Rules:** `inbound_rules` (required, 1 to 20) and `outbound_rules` (up to 20), each a list of `protocol` (`tcp`,
+  `udp` or `icmp`), `port_range` (`22`, `8000-9000` or `all`; the module drops it for `icmp` and sends `all` as
+  `1-65535`) and `source_addresses` / `destination_addresses` (1 to 10 IPv4 or IPv6 CIDRs). Allow rules only, and
+  addresses only: the provider's `source_tags`, `source_droplet_ids` and the like are left out so a rule can't name
+  other users' resources. 40 rules at most stays under DigitalOcean's 50.
+- **Defaults:** outbound allows tcp, udp and icmp to `0.0.0.0/0` and `::/0`. A DigitalOcean firewall blocks whatever
+  no rule allows, so without that default a droplet couldn't reach DNS or package mirrors. Inbound has no default.
+- **SSH from anywhere** (`0.0.0.0/0` on port 22) is allowed. Droplets are key-only (#10), and a droplet with no
+  firewall is already open on 22, so refusing it would only push users to skip the firewall. The description tells
+  the agent to suggest the user's own `/32` and to warn when the source is anywhere.
+- **Checks:** the manifest's patterns check ports are 1 to 65535 and addresses look like CIDRs. A low-high range
+  (`9000-8000`) and malformed IPv6 pass the manifest but fail the Terraform variable validation at plan time.
+- **`rp_tags` is declared but unused.** A firewall can't carry tags: `digitalocean_firewall`'s `tags` picks the droplets
+  it applies to, so passing `rp_tags` there would attach it to every user's droplets. Ownership of a firewall is
+  tracked by its request only.
+- **Outputs:** `id`, `status`, `target_tags`.
