@@ -10,7 +10,9 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Services.Keycloak;
 
 /// <summary>
 /// Test host for integration tests. The database is an in-memory SQLite connection kept open for the fixture's
@@ -19,6 +21,9 @@ using Microsoft.Extensions.Hosting;
 public class ApiFactory : WebApplicationFactory<Program>
 {
   private readonly SqliteConnection _connection = new("DataSource=:memory:");
+
+  /// <summary>The fake Keycloak admin API the app uses, shared by every request to this factory's host.</summary>
+  public InMemoryKeycloakUserAdmin Keycloak { get; } = new();
 
   /// <inheritdoc />
   protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -34,6 +39,10 @@ public class ApiFactory : WebApplicationFactory<Program>
 
       // Controllers in this test assembly (TestAdminController) aren't discovered by default; add them.
       services.AddControllers().AddApplicationPart(typeof(ApiFactory).Assembly);
+
+      // Tests never call Keycloak's admin API.
+      services.RemoveAll<IKeycloakUserAdmin>();
+      services.AddSingleton<IKeycloakUserAdmin>(Keycloak);
     });
 
     builder.ConfigureServices(services =>
