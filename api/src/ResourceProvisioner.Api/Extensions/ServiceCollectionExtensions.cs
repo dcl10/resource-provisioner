@@ -17,6 +17,7 @@ public static class ServiceCollectionExtensions
     services.AddValidatedOptions<AnthropicOptions>(AnthropicOptions.SectionName);
     services.AddValidatedOptions<DigitalOceanOptions>(DigitalOceanOptions.SectionName);
     services.AddValidatedOptions<SpacesOptions>(SpacesOptions.SectionName);
+    services.AddValidatedOptions<CatalogOptions>(CatalogOptions.SectionName);
     services.AddValidatedOptions<WorkspacesOptions>(WorkspacesOptions.SectionName);
     services.AddValidatedOptions<LimitsOptions>(LimitsOptions.SectionName);
 
