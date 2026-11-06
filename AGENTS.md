@@ -45,8 +45,13 @@ When implementing a feature or bug fix:
 Follow `.editorconfig` at the repo root for formatting: indent size, line endings, charset, C# naming conventions and
 C# language preferences. Do not override or duplicate its rules. In `web/`, Prettier and ESLint are the authority.
 
-- `web/`: TypeScript function components with hooks. Tailwind + shadcn/ui (`base-nova`); add primitives with
-  `npx shadcn@latest add <component>` and never hand-edit `components/ui/*`. Icons from `lucide-react` only.
+- `web/`: Next.js 16 changes often. Before writing Next.js code, read the matching guide in
+  `web/node_modules/next/dist/docs/`, not what you remember. Cache Components is on.
+- `web/`: TypeScript function components with hooks. Tailwind v4 + shadcn/ui, style `base-nova` (Base UI, not Radix:
+  compose with the `render` prop, not `asChild`). Add primitives with `npx shadcn@latest add <component>` and never
+  hand-edit `components/ui/*`; customise with `className` at the call site. Forms use shadcn's `field` component with
+  react-hook-form + zod (there is no `form` component in `base-nova`). Icons from `lucide-react` only. The full stack
+  is listed in [docs/web.md](docs/web.md); don't add a library that duplicates one already there.
 - `api/`: keep endpoints thin; logic belongs in services behind interfaces so tests can fake them.
 - `catalog/`: every module is run through `terraform fmt`. Each module's `resource.json` must match its `variables.tf`.
 
