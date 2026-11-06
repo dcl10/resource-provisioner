@@ -11,6 +11,7 @@ invited from the app.
 - [How the web app signs in](#how-the-web-app-signs-in)
 - [How the API checks sign-in](#how-the-api-checks-sign-in)
 - [Bootstrapping the first admin](#bootstrapping-the-first-admin)
+- [Inviting users](#inviting-users)
 - [Re-importing the realm](#re-importing-the-realm)
 
 ## Local services
@@ -206,8 +207,62 @@ The app can only send invites once an admin exists, so you create the first admi
    already there as a default role.
 7. Start the API and web app, open `http://localhost:3000` and sign in with your email and password.
 
-From then on, invite other people from the app's **Users** page (#8). The bootstrap admin is only for the Keycloak
+From then on, invite other people from the app's **Users** page ([below](#inviting-users)). The bootstrap admin is only for the Keycloak
 admin console; it can't sign in to the app, because it lives in the `master` realm.
+
+## Inviting users
+
+Admins invite colleagues from **Users** (`/admin/users`) in the web app. It's the only way to get an account, because
+self-registration is off. The page calls the API's admin-only invitations endpoints through the API proxy; non-admins
+are sent to the chat, and the API answers them 403 anyway.
+
+**What an invite does.** `POST /api/invitations` with `{ "email": "..." }`:
+
+1. Lower-cases the email and refuses it (409) if a Keycloak user already has it.
+2. Creates the Keycloak user: username and email both the address, enabled, email not verified. Nothing assigns a
+   role: `rp-user` is a default realm role, so Keycloak gives it to every new user.
+3. Calls Keycloak's `execute-actions-email` for the user with `VERIFY_EMAIL` and `UPDATE_PASSWORD`, `lifespan`
+   604800 (7 days), `client_id=rp-web` and `redirect_uri` set to the app URL. Keycloak emails a link (locally, open
+   MailHog at `http://localhost:8025`).
+4. Saves an `Invitation` row: email, Keycloak user ID, the inviting admin's `sub`, when it was sent and when the link
+   expires. If the email can't be sent, the Keycloak user is deleted again and the API answers 502, so the admin can
+   just try again.
+
+**What the colleague does.** The link opens Keycloak, which verifies their email, asks for a password (the realm
+policy: at least 12 characters), then sends them to the app. Signing in the first time, Keycloak also asks for their
+first and last name, because the realm's user profile requires them and the invite only knows the email.
+
+**Statuses.** Worked out every time invitations are read, never stored:
+
+| Status | When |
+| --- | --- |
+| `Revoked` | An admin revoked it. Wins over everything else. |
+| `Accepted` | Keycloak reports the user's email as verified, i.e. they used the link. |
+| `Expired` | Not accepted, and the link's expiry has passed. |
+| `Pending` | Otherwise. |
+
+Listing asks Keycloak for each non-revoked invitation's user, so it needs only `view-users`.
+
+**Resend and revoke.** Both work only on `Pending` or `Expired` invitations (409 otherwise).
+
+- `POST /api/invitations/{id}/resend` sends a fresh action email and moves the expiry 7 days on. Keycloak's links
+  are self-contained tokens, so an earlier link still works until its own expiry.
+- `POST /api/invitations/{id}/revoke` disables the Keycloak user and records when. Opening the link then shows
+  Keycloak's "Account is disabled" page. The user isn't deleted, so the address can't be invited again until someone
+  deletes or re-enables the user in the Keycloak admin console.
+
+Accepted users are managed in the Keycloak admin console (disabling them, making them admins), not in the app.
+
+**Configuration.** `Keycloak:Secret` (the `rp-api` secret) must be set, or invite calls fail with 502 and a message
+saying so. `Invitations:AppUrl`, `Invitations:ClientId` and `Invitations:ExpiryDays` set the link's return URL, client
+and lifetime; see [architecture.md](architecture.md#configuration). Deployed, `AppUrl` is the app's public URL and has
+to match one of `rp-web`'s valid redirect URIs.
+
+**Under the hood.** The API calls Keycloak's admin REST API through the Kiota client from
+`Keycloak.AuthServices.Sdk.Kiota`. `Duende.AccessTokenManagement` gets its tokens with client credentials as `rp-api`
+and caches them until they expire. The calls sit behind `IKeycloakUserAdmin` (`api/.../Services/Keycloak/`), so tests
+use an in-memory fake; the rules live in `InvitationService`. This follows MidlandsHub, without its Entra parts or
+its own accept-invite page and token: Keycloak's action link does that job.
 
 ## Re-importing the realm
 

@@ -72,6 +72,9 @@ may be empty at startup; the features that use them check for them.
 | `Keycloak:Realm` | `resource-provisioner` | no |
 | `Keycloak:Resource` | `rp-api` (the JWT audience) | no |
 | `Keycloak:Secret` | none (the `rp-api` client secret, used for invites) | yes |
+| `Invitations:AppUrl` | `http://localhost:3000` (where invited users land; a valid `rp-web` redirect URI) | no |
+| `Invitations:ClientId` | `rp-web` (the client the invite link belongs to) | no |
+| `Invitations:ExpiryDays` | `7` (how long the invite link works, 1 to 30) | no |
 | `Anthropic:ApiKey` | none | yes |
 | `Anthropic:Model` | `claude-sonnet-5-5` | no |
 | `Anthropic:Effort` | `low` (`low`, `medium`, `high`, `xhigh` or `max`) | no |
