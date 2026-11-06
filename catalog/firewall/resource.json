@@ -1,0 +1,133 @@
+{
+  "id": "firewall",
+  "displayName": "Cloud Firewall",
+  "description": "A DigitalOcean Cloud Firewall that filters traffic to and from one or more of the user's own droplets. Pick this to restrict which ports and addresses can reach a droplet the user already has; find the droplet with list_my_resources. It can't protect anyone else's droplets, databases or buckets.",
+  "costHint": "Free.",
+  "variables": [
+    {
+      "name": "name",
+      "label": "Name",
+      "type": "string",
+      "description": "Firewall name: starts with a lowercase letter, then lowercase letters, digits and hyphens, at most 63 characters.",
+      "required": true,
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "maxLength": 63
+    },
+    {
+      "name": "droplet_request_ids",
+      "label": "Droplets",
+      "type": "array",
+      "description": "The request IDs of the user's own droplets to protect, 1 to 5 of them, taken from list_my_resources (a lowercase GUID such as 3f2b8c1e-5d4a-4e6f-9a7b-1c2d3e4f5a6b). Only droplets the user requested and that are provisioned are accepted. Never use a droplet name, a DigitalOcean droplet ID or a tag.",
+      "required": true,
+      "minItems": 1,
+      "maxItems": 5,
+      "items": {
+        "type": "string",
+        "description": "A droplet request ID (lowercase GUID).",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      }
+    },
+    {
+      "name": "inbound_rules",
+      "label": "Inbound rules",
+      "type": "array",
+      "description": "Traffic allowed in, 1 to 20 rules; everything else inbound is blocked, including SSH unless a rule allows tcp port 22. Each rule is a protocol, a port range and the source addresses allowed. For SSH, suggest the user's own IP as x.x.x.x/32; 0.0.0.0/0 and ::/0 (anywhere) are accepted but say that this opens the port to the whole internet.",
+      "required": true,
+      "minItems": 1,
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "description": "One allow rule for incoming traffic.",
+        "properties": [
+          {
+            "name": "protocol",
+            "label": "Protocol",
+            "type": "string",
+            "description": "tcp, udp or icmp (ping).",
+            "required": true,
+            "allowedValues": ["tcp", "udp", "icmp"]
+          },
+          {
+            "name": "port_range",
+            "label": "Ports",
+            "type": "string",
+            "description": "One port (22), a range low-high (8000-9000) within 1-65535, or all. Use all for icmp, which has no ports.",
+            "required": true,
+            "pattern": "^(all|([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])(-([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?)$",
+            "maxLength": 11
+          },
+          {
+            "name": "source_addresses",
+            "label": "From",
+            "type": "array",
+            "description": "1 to 10 IPv4 or IPv6 CIDRs allowed to connect: 203.0.113.7/32 for one IPv4 address, 2001:db8::/32 for an IPv6 block, 0.0.0.0/0 and ::/0 for anywhere.",
+            "required": true,
+            "minItems": 1,
+            "maxItems": 10,
+            "items": {
+              "type": "string",
+              "description": "An IPv4 or IPv6 CIDR.",
+              "pattern": "^(((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])|[0-9a-fA-F]{0,4}(:[0-9a-fA-F]{0,4}){2,7}/(12[0-8]|1[01][0-9]|[1-9]?[0-9]))$",
+              "maxLength": 43
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "outbound_rules",
+      "label": "Outbound rules",
+      "type": "array",
+      "description": "Traffic allowed out, at most 20 rules; everything else outbound is blocked. Leave this out to allow all outbound traffic (tcp, udp and icmp to anywhere), which is what most users want: with no outbound rules the droplet can't reach package mirrors or DNS. Each rule is a protocol, a port range and the destination addresses allowed.",
+      "maxItems": 20,
+      "default": [
+        { "protocol": "tcp", "port_range": "all", "destination_addresses": ["0.0.0.0/0", "::/0"] },
+        { "protocol": "udp", "port_range": "all", "destination_addresses": ["0.0.0.0/0", "::/0"] },
+        { "protocol": "icmp", "port_range": "all", "destination_addresses": ["0.0.0.0/0", "::/0"] }
+      ],
+      "items": {
+        "type": "object",
+        "description": "One allow rule for outgoing traffic.",
+        "properties": [
+          {
+            "name": "protocol",
+            "label": "Protocol",
+            "type": "string",
+            "description": "tcp, udp or icmp (ping).",
+            "required": true,
+            "allowedValues": ["tcp", "udp", "icmp"]
+          },
+          {
+            "name": "port_range",
+            "label": "Ports",
+            "type": "string",
+            "description": "One port (443), a range low-high (8000-9000) within 1-65535, or all. Use all for icmp, which has no ports.",
+            "required": true,
+            "pattern": "^(all|([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])(-([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?)$",
+            "maxLength": 11
+          },
+          {
+            "name": "destination_addresses",
+            "label": "To",
+            "type": "array",
+            "description": "1 to 10 IPv4 or IPv6 CIDRs the droplet may connect to: 203.0.113.7/32 for one IPv4 address, 0.0.0.0/0 and ::/0 for anywhere.",
+            "required": true,
+            "minItems": 1,
+            "maxItems": 10,
+            "items": {
+              "type": "string",
+              "description": "An IPv4 or IPv6 CIDR.",
+              "pattern": "^(((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])|[0-9a-fA-F]{0,4}(:[0-9a-fA-F]{0,4}){2,7}/(12[0-8]|1[01][0-9]|[1-9]?[0-9]))$",
+              "maxLength": 43
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "outputs": [
+    { "name": "id", "description": "Firewall ID." },
+    { "name": "status", "description": "DigitalOcean's status for the firewall: waiting, succeeded or failed." },
+    { "name": "target_tags", "description": "The droplet tags the firewall applies to: rp-<requestId> for each protected droplet request." }
+  ]
+}
