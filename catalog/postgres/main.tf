@@ -1,5 +1,6 @@
 resource "digitalocean_database_cluster" "this" {
-  name       = var.name
+  # <name>-<rp_name_suffix>; just <name> when the suffix is empty (only outside the runner).
+  name       = join("-", compact([var.name, var.rp_name_suffix]))
   engine     = "pg"
   version    = var.postgres_version
   size       = var.size
