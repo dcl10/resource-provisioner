@@ -8,6 +8,7 @@ invited from the app.
 - [What the realm import creates](#what-the-realm-import-creates)
 - [Client settings](#client-settings)
 - [Client secrets](#client-secrets)
+- [How the API checks sign-in](#how-the-api-checks-sign-in)
 - [Bootstrapping the first admin](#bootstrapping-the-first-admin)
 - [Re-importing the realm](#re-importing-the-realm)
 
@@ -133,6 +134,29 @@ AUTH_KEYCLOAK_ISSUER=http://localhost:8080/realms/resource-provisioner
 **To regenerate a secret**, select **Regenerate** on the same Credentials tab, then update user-secrets or
 `.env.local` and restart the API or web app. The old secret stops working straight away. Re-importing the realm
 (below) also generates new secrets.
+
+## How the API checks sign-in
+
+The API accepts Keycloak access tokens as `Authorization: Bearer <token>`. The web app's server sends them through its
+proxy route (#7); the browser never holds them.
+
+- **Token validation:** issuer `{Keycloak:AuthServerUrl}/realms/{Keycloak:Realm}` (signing keys from its discovery
+  document), audience `rp-api` (added to `rp-web` tokens by the audience mapper), lifetime with 30 seconds' clock
+  skew. HTTPS metadata is only optional in Development.
+- **Claims:** the JWT claim names are kept (`sub`, `email`, `preferred_username`), and the realm roles in
+  `realm_access.roles` are copied into standard role claims, so `RequireRole` and `IsInRole` work.
+- **Signed in by default:** the fallback policy requires an authenticated user on every endpoint that doesn't name
+  another policy, so a new endpoint can't be left open by mistake. Only `/health` opts out. No or an invalid token
+  gets **401**, even for routes that don't exist.
+- **Admins:** controllers or actions only admins can call use `[Authorize(Policy = AuthPolicies.AdminOnly)]`, which
+  requires `rp-admin`. A signed-in user without it gets **403**.
+- **The current user:** inject `ICurrentUser` for `UserId` (the `sub`, which is what data is owned by), `Email` and
+  `IsAdmin`. Scope queries to `UserId` unless `IsAdmin`. `GET /api/me` returns these three, which is a quick way to
+  check a token.
+
+Integration tests replace JWT validation with a test scheme that reads claims from an `X-Test-Claims` header.
+`ApiFactory.CreateUserClient(...)`, `CreateAdminClient()` and `CreateAnonymousClient()` build the clients; roles go
+in `realm_access` as Keycloak sends them, so the role mapping is tested too.
 
 ## Bootstrapping the first admin
 

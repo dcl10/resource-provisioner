@@ -1,8 +1,12 @@
 namespace ResourceProvisioner.Api.Tests.Fixtures;
 
+using System.Text.Json;
+using Auth;
 using Data;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -20,6 +24,17 @@ public class ApiFactory : WebApplicationFactory<Program>
   protected override void ConfigureWebHost(IWebHostBuilder builder)
   {
     builder.UseEnvironment("Testing");
+
+    // Tests have no Keycloak: authenticate from the X-Test-Claims header instead of a JWT.
+    builder.ConfigureTestServices(services =>
+    {
+      services
+        .AddAuthentication(TestAuthHandler.SchemeName)
+        .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>(TestAuthHandler.SchemeName, _ => { });
+
+      // Controllers in this test assembly (TestAdminController) aren't discovered by default; add them.
+      services.AddControllers().AddApplicationPart(typeof(ApiFactory).Assembly);
+    });
 
     builder.ConfigureServices(services =>
     {
@@ -53,6 +68,46 @@ public class ApiFactory : WebApplicationFactory<Program>
 
     return host;
   }
+
+  /// <summary>Creates a client that sends no credentials.</summary>
+  /// <returns>An anonymous client.</returns>
+  public HttpClient CreateAnonymousClient() => CreateClient();
+
+  /// <summary>
+  /// Creates a client signed in as a user with the given realm roles, carried in <c>realm_access</c> as Keycloak puts
+  /// them, so the realm roles claims transformation runs as it does in production.
+  /// </summary>
+  /// <param name="userId">The user's <c>sub</c>.</param>
+  /// <param name="email">The user's email, or null to leave the claim out.</param>
+  /// <param name="roles">Realm roles; <c>rp-user</c> if none are given.</param>
+  /// <returns>An authenticated client.</returns>
+  public HttpClient CreateUserClient(
+    string userId = "user-1",
+    string? email = "user@example.com",
+    params string[] roles)
+  {
+    var realmAccess = JsonSerializer.Serialize(new { roles = roles.Length > 0 ? roles : [Roles.User] });
+
+    List<TestAuthHandler.TestClaim> claims =
+    [
+      new(KeycloakClaims.Subject, userId),
+      new(KeycloakClaims.RealmAccess, realmAccess),
+    ];
+    if (email is not null)
+    {
+      claims.Add(new TestAuthHandler.TestClaim(KeycloakClaims.Email, email));
+    }
+
+    var client = CreateClient();
+    client.DefaultRequestHeaders.Add(TestAuthHandler.ClaimsHeader, JsonSerializer.Serialize(claims));
+
+    return client;
+  }
+
+  /// <summary>Creates a client signed in as an admin (<c>rp-admin</c> and <c>rp-user</c>).</summary>
+  /// <returns>An authenticated admin client.</returns>
+  public HttpClient CreateAdminClient() =>
+    CreateUserClient("admin-1", "admin@example.com", Roles.Admin, Roles.User);
 
   /// <inheritdoc />
   protected override void Dispose(bool disposing)
