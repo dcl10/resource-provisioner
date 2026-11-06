@@ -8,11 +8,11 @@
       "name": "name",
       "label": "Name",
       "type": "string",
-      "description": "Cluster name: 3 to 63 characters, starts with a lowercase letter, then lowercase letters, digits and hyphens, not ending in a hyphen. Must not clash with another cluster's name.",
+      "description": "Cluster name: 3 to 34 characters, starts with a lowercase letter, then lowercase letters, digits and hyphens, not ending in a hyphen. A short suffix from the request is added to it.",
       "required": true,
       "pattern": "^[a-z][a-z0-9-]*[a-z0-9]$",
       "minLength": 3,
-      "maxLength": 63
+      "maxLength": 34
     },
     {
       "name": "region",
