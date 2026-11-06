@@ -1,0 +1,111 @@
+# resource-provisioner — Agent Instructions
+
+A chat UI (`web/`, Next.js) and an API (`api/`, ASP.NET Core 10) where a Claude agent picks a resource type from a
+vetted Terraform catalog (`catalog/`), collects its variables and, once the user confirms, provisions it on
+DigitalOcean. How it works is documented in [docs/](docs/README.md); this file holds the rules only.
+
+Read [docs/architecture.md](docs/architecture.md) before changing the agent, catalog, requests or Terraform code: its
+design rules (the LLM never writes HCL or triggers provisioning, manifests are the single source of truth, secrets never
+reach the LLM, and so on) are hard constraints.
+
+---
+
+## Development Workflow
+
+When implementing a feature or bug fix:
+
+0. **Create a GitHub issue** if one describing the work doesn't already exist, using the body format from
+   `.github/ISSUE_TEMPLATE.md`:
+   ```bash
+   gh issue create --title "<title>" --body "<description>"
+   ```
+1. **Ensure `main` is up to date** before branching:
+   ```bash
+   git checkout main && git pull
+   ```
+2. **Create a branch** with a descriptive name:
+   ```bash
+   git checkout -b feature/<name>   # new functionality
+   git checkout -b fix/<name>       # bug fix
+   ```
+3. **Develop** the requested change.
+4. **Commit** to the branch. Group commits by type and file:
+   - App code per file
+   - Tests per file, separate from app code
+   - `CLAUDE.md`/`AGENTS.md` updates last
+5. **Open a PR** using the `gh` CLI, with a body matching `.github/pull_request_template.md`:
+   ```bash
+   gh pr create --title "<title>" --body "..."
+   ```
+
+---
+
+## Code Style
+
+Follow `.editorconfig` at the repo root for formatting: indent size, line endings, charset, C# naming conventions and
+C# language preferences. Do not override or duplicate its rules. In `web/`, Prettier and ESLint are the authority.
+
+- `web/`: TypeScript function components with hooks. Tailwind + shadcn/ui (`base-nova`); add primitives with
+  `npx shadcn@latest add <component>` and never hand-edit `components/ui/*`. Icons from `lucide-react` only.
+- `api/`: keep endpoints thin; logic belongs in services behind interfaces so tests can fake them.
+- `catalog/`: every module is run through `terraform fmt`. Each module's `resource.json` must match its `variables.tf`.
+
+---
+
+## Documentation
+
+### Backend (C#)
+
+All public classes, methods and properties must have XML doc comments:
+
+```csharp
+/// <summary>Brief description of what this does.</summary>
+/// <param name="paramName">What the parameter is.</param>
+/// <returns>What is returned.</returns>
+```
+
+Internal and private members: add a comment only when the intent is not obvious from the name and types alone.
+
+### Frontend (TypeScript)
+
+All exported functions, components and hooks must have JSDoc comments:
+
+```ts
+/**
+ * Brief description of what this does.
+ * @param paramName - what the parameter is
+ * @returns what is returned
+ */
+```
+
+Inline comments for non-obvious logic only. Do not comment self-evident code.
+
+### Keep `docs/` current
+
+README, CLAUDE.md and AGENTS.md stay short. Explanations live in `docs/`, one file per topic, indexed in
+[docs/README.md](docs/README.md). A change that alters how something works updates its doc in the same PR; a new topic
+gets a new file and an index entry. Keep `AGENTS.md` identical to `CLAUDE.md`.
+
+---
+
+## Testing
+
+### Backend
+
+- **Framework:** xUnit, in `api.Tests/`
+- **Attributes:** `[Fact]` for single cases, `[Theory]` + `[InlineData]` for parameterised cases
+- **Naming:** `MethodName_ExpectedBehaviour_Condition`
+- **Pattern:** `WebApplicationFactory` integration tests on SQLite for endpoints and middleware, with a test auth
+  scheme instead of Keycloak; plain unit tests for pure logic. Fake Keycloak, Claude and the Terraform process
+  runner. Tests never call real external services.
+
+### Frontend
+
+- **Framework:** Vitest + React Testing Library
+- **Location:** colocate tests as `ComponentName.test.tsx`, or group them in a `__tests__/` folder in the same
+  directory
+- **Naming:** a `describe` block per component or function; `it('does x when y')`
+
+### Terraform
+
+- `terraform fmt -check` and `terraform validate` pass for every `catalog/*` module and for `infra/`.
