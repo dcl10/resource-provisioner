@@ -36,18 +36,20 @@ api/
 ├── Directory.Packages.props     # Central Package Management: every NuGet version lives here
 ├── .config/dotnet-tools.json    # dotnet-ef, pinned to the EF Core version
 ├── src/ResourceProvisioner.Api/
-│   ├── Program.cs               # host setup: options, auth, DbContext, catalog, controllers, /health
+│   ├── Program.cs               # host setup: options, auth, invitations, DbContext, catalog, controllers, /health
 │   ├── Auth/                    # roles, policies, realm roles mapping, ICurrentUser
 │   ├── Config/                  # typed options, one class per config section
 │   ├── Controllers/             # API controllers, one per resource (MeController: GET /api/me,
-│   │                            # CatalogController: GET /api/catalog)
+│   │                            # CatalogController: GET /api/catalog, InvitationsController: /api/invitations)
 │   ├── Data/                    # AppDbContext, design-time factory, Migrations/
 │   ├── Extensions/              # service registration helpers
-│   ├── Models/                  # request and response types
-│   └── ResourceCatalog/         # manifest types, loader and checks, ICatalogService (see catalog.md)
+│   ├── Models/                  # request and response types, the Invitation entity
+│   ├── ResourceCatalog/         # manifest types, loader and checks, ICatalogService (see catalog.md)
+│   └── Services/                # Keycloak/ (IKeycloakUserAdmin over the admin API), Invitations/ (see auth-setup.md)
 └── tests/ResourceProvisioner.Api.Tests/
     └── Fixtures/                # ApiFactory (WebApplicationFactory on in-memory SQLite), TestAuthHandler,
-                                 # TestAdminController (test-only admin endpoint), TempCatalog,
+                                 # TestAdminController (test-only admin endpoint), InMemoryKeycloakUserAdmin,
+                                 # TempCatalog,
                                  # catalog/ (fixture resource types, not real modules)
 ```
 
@@ -76,6 +78,9 @@ use them check for them.
 | `Keycloak:Realm` | `resource-provisioner` | no |
 | `Keycloak:Resource` | `rp-api` (the JWT audience) | no |
 | `Keycloak:Secret` | none (the `rp-api` client secret, used for invites) | yes |
+| `Invitations:AppUrl` | `http://localhost:3000` (where invited users land; a valid `rp-web` redirect URI) | no |
+| `Invitations:ClientId` | `rp-web` (the client the invite link belongs to) | no |
+| `Invitations:ExpiryDays` | `7` (how long the invite link works, 1 to 30) | no |
 | `Anthropic:ApiKey` | none | yes |
 | `Anthropic:Model` | `claude-sonnet-5-5` | no |
 | `Anthropic:Effort` | `low` (`low`, `medium`, `high`, `xhigh` or `max`) | no |

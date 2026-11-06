@@ -1,6 +1,7 @@
 # Web app
 
-The Next.js frontend in `web/`: the chat page, the requests list and detail pages, and the admin Users page.
+The Next.js frontend in `web/`: the chat page, the requests list and detail pages, and the admin Users page, where
+admins invite colleagues ([the invite flow](auth-setup.md#inviting-users)).
 
 ## Running it
 
@@ -35,11 +36,13 @@ web/
 │   ├── (app)/                  # signed-in pages, inside <AppShell>
 │   │   ├── layout.tsx
 │   │   ├── chat/page.tsx       # chat (#18)
-│   │   └── requests/page.tsx   # requests list (#19)
+│   │   ├── requests/page.tsx   # requests list (#19)
+│   │   └── admin/users/page.tsx # admins only: invite colleagues, invitation statuses
 │   └── api/
 │       ├── auth/[...nextauth]/ # Auth.js endpoints; /session is cut down so tokens never reach the browser
 │       └── proxy/[...path]/    # forwards to the .NET API with the access token
 ├── components/
+│   ├── admin/                  # AdminOnly gate, the Users page (invite form, invitations table, query hooks)
 │   ├── providers.tsx           # next-themes, TanStack Query, tooltips, sonner Toaster
 │   ├── app-shell.tsx           # header and page container around every signed-in page
 │   ├── session-header-nav.tsx  # reads the session (behind <Suspense>) and renders <HeaderNav>
@@ -51,6 +54,7 @@ web/
 └── lib/
     ├── auth/                   # Auth.js config, Keycloak token handling, session helpers, server actions
     ├── api-proxy.ts            # URL and header mapping for the API proxy
+    ├── invitations.ts          # invitations API calls, types, invite form schema
     └── utils.ts                # shadcn's cn() helper
 ```
 
@@ -63,9 +67,14 @@ For code in `web/`:
   `{ id, name, email, isAdmin }` or null. It reads cookies, so with Cache Components the component that calls it has
   to sit behind a `<Suspense>` boundary, as `SessionHeaderNav` does in `AppShell`. Keep the read out of layouts'
   top level, or the whole page waits for it. Pass this narrow user to Client Components, never the session.
-- **Admin-only UI:** use `user.isAdmin`. It only hides things; the API enforces `rp-admin` itself.
+- **Admin-only UI:** use `user.isAdmin` to hide links and controls. For a whole admin page, wrap its content in
+  `<AdminOnly>` (`components/admin/admin-only.tsx`) inside a `<Suspense>` boundary: it reads the session and
+  redirects anyone who isn't an admin to `/chat`. Both only keep the UI tidy; the API enforces `rp-admin` itself.
 - **Calling the API from the browser:** fetch `/api/proxy/<path>`, which goes to `<API_URL>/api/<path>` with the
   user's access token. A signed-out request gets 401. Responses stream, so server-sent events work through it.
+  Wrap the calls in TanStack Query hooks (`useQuery` to read, `useMutation` and invalidate the list's query key to
+  change), as `components/admin/use-invitations.ts` does. The API's errors are problem details;
+  `readErrorMessage` in `lib/invitations.ts` turns one into a message for a toast.
 - **Sign in and out:** `signInWithKeycloak` and `signOutEverywhere` in `lib/auth/actions.ts` are server actions.
 
 ## Stack
