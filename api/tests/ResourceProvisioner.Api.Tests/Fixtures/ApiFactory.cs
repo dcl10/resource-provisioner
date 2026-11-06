@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
@@ -18,12 +19,21 @@ using Microsoft.Extensions.Hosting;
 /// </summary>
 public class ApiFactory : WebApplicationFactory<Program>
 {
+  /// <summary>
+  /// The fixture catalog copied next to the test assembly: <c>test-server</c> and <c>test-firewall</c>, fake types
+  /// that cover every variable type. The host loads it instead of the repo's <c>catalog/</c>.
+  /// </summary>
+  public static readonly string FixtureCatalogRoot = Path.Combine(AppContext.BaseDirectory, "Fixtures", "catalog");
+
   private readonly SqliteConnection _connection = new("DataSource=:memory:");
 
   /// <inheritdoc />
   protected override void ConfigureWebHost(IWebHostBuilder builder)
   {
     builder.UseEnvironment("Testing");
+
+    builder.ConfigureAppConfiguration(config =>
+      config.AddInMemoryCollection(new Dictionary<string, string?> { ["Catalog:Root"] = FixtureCatalogRoot }));
 
     // Tests have no Keycloak: authenticate from the X-Test-Claims header instead of a JWT.
     builder.ConfigureTestServices(services =>
