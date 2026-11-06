@@ -104,6 +104,22 @@ masked in summaries, so a sensitive variable can't be `required` (the agent coul
 `variables.tf` but left out of the manifest, so neither the user nor the LLM can set them. Give them a default in
 Terraform.
 
+- `rp_name_suffix` (`string`, default `""`): a short value from the request ID (up to 8 lowercase letters or digits).
+  The resource's DigitalOcean name is `<name>-<rp_name_suffix>`, so names never clash in the shared account. Set the
+  manifest's `name` `maxLength` to the resource's name limit minus 9 (for `-` and the suffix).
+
+**Referencing the user's own droplets** (a firewall's targets, a database's trusted sources): never take a tag, name
+or DigitalOcean ID. Take an array of droplet **request IDs** (`items.pattern` a lowercase GUID, `maxItems` the
+provider's limit), named `droplet_request_ids` or `<purpose>_droplet_request_ids`, and have the module turn each into
+its `rp-<requestId>` tag. The manifest can only check the shape, so:
+
+- **#14** must, at `propose_request` and again at confirm, reject the request unless every ID is a `droplet` request
+  owned by the requesting user (admins included) and `Succeeded`.
+- **#17**'s `list_my_resources` must return the request ID and type of the user's own resources only.
+
+A free-form tag would let a user name another user's `rp-<requestId>` or the shared `resource-provisioner` tag. Request
+IDs are never reused, so a tag can't later match someone else's droplet.
+
 ## Outputs
 
 List every output in `outputs.tf`, with `name`, `description` and `sensitive`. A sensitive output (a password, a
@@ -192,16 +208,11 @@ Droplet (#10), managed Postgres (#11) and Spaces bucket (#13) are planned; each 
 
 ### Cloud Firewall
 
-- **Targets:** `droplet_request_ids`, 1 to 5 droplet **request IDs** (lowercase GUIDs, from `list_my_resources`), not
-  tags or droplet IDs. The module turns each into its `rp-<requestId>` tag and the firewall applies to droplets with
-  those tags. A free-form tag would let a user name another user's `rp-<requestId>` or the shared
-  `resource-provisioner` tag, which every user's droplets carry. Five is DigitalOcean's tag limit per firewall
-  ([limits](https://docs.digitalocean.com/products/networking/firewalls/details/limits/)).
-- **Ownership is not checked here.** The manifest only checks the shape of an ID. Before a firewall request is created
-  or confirmed, **#14** must check that every ID is a request of type `droplet`, owned by the requesting user (admins
-  included: no cross-user targets), and `Succeeded`, and reject the request otherwise, at `propose_request` and again
-  at confirm. **#17**'s `list_my_resources` must return the request ID and type of only the user's own resources, so
-  the agent has the ID to give. Request IDs are never reused, so a tag can't later match someone else's droplet.
+- **Targets:** `droplet_request_ids`, 1 to 5, as in
+  [Referencing the user's own droplets](#variables); the firewall applies to droplets with those `rp-<requestId>` tags.
+  Five is DigitalOcean's tag limit per firewall
+  ([limits](https://docs.digitalocean.com/products/networking/firewalls/details/limits/)). Ownership is checked by #14,
+  not here.
 - **Rules:** `inbound_rules` (required, 1 to 20) and `outbound_rules` (up to 20), each a list of `protocol` (`tcp`,
   `udp` or `icmp`), `port_range` (`22`, `8000-9000` or `all`; the module drops it for `icmp` and sends `all` as
   `1-65535`) and `source_addresses` / `destination_addresses` (1 to 10 IPv4 or IPv6 CIDRs). Allow rules only, and
@@ -217,4 +228,5 @@ Droplet (#10), managed Postgres (#11) and Spaces bucket (#13) are planned; each 
 - **`rp_tags` is declared but unused.** A firewall can't carry tags: `digitalocean_firewall`'s `tags` picks the droplets
   it applies to, so passing `rp_tags` there would attach it to every user's droplets. Ownership of a firewall is
   tracked by its request only.
+- **Name:** `<name>-<rp_name_suffix>`; `name` is at most 54 characters, keeping the whole within 63.
 - **Outputs:** `id`, `status`, `target_tags`.
