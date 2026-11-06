@@ -40,6 +40,26 @@ When implementing a feature or bug fix:
 
 ---
 
+## Build & Test
+
+```bash
+cd web && npm ci && npm run lint && npm test && npm run build   # web
+cd api && dotnet build && dotnet test                            # API
+terraform fmt -recursive catalog infra                           # Terraform formatting
+```
+
+CI (`.github/workflows/ci.yml`) runs on PRs into, and pushes to, `main`, in three jobs:
+
+- **web:** `npm ci`, `npm run lint -- --max-warnings=0` (Prettier and import-order warnings fail CI), `vitest run`,
+  `npm run build`
+- **api:** `dotnet build`, `dotnet test`
+- **terraform:** `terraform fmt -check -recursive` over `catalog/` and `infra/`, then `init -backend=false` and
+  `validate` for each `catalog/*/` module and `infra/`; folders without `.tf` files are skipped
+
+Run the matching checks locally before opening a PR.
+
+---
+
 ## Code Style
 
 Follow `.editorconfig` at the repo root for formatting: indent size, line endings, charset, C# naming conventions and

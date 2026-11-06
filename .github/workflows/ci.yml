@@ -1,0 +1,98 @@
+name: ci
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: install Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: enable Corepack
+        # Bare `corepack enable` only shims Yarn/pnpm; npm must be named so the
+        # version pinned in package.json's "packageManager" is used.
+        run: corepack enable npm
+
+      - name: install dependencies
+        run: npm ci
+
+      - name: lint
+        # ESLint reports Prettier and import-order problems as warnings; fail on them here.
+        run: npm run lint -- --max-warnings=0
+
+      - name: test
+        run: npx vitest run
+
+      - name: build
+        run: npm run build
+
+  api:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: install .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: build
+        run: dotnet build
+
+      - name: test
+        run: dotnet test --no-build
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: install Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          # TODO(#20): pin to the version baked into the API image.
+          terraform_version: latest
+
+      - name: check formatting
+        run: terraform fmt -check -recursive -diff catalog infra
+
+      - name: validate modules
+        # Each catalog/<type>/ module and infra/ is validated on its own; folders
+        # without .tf files (still empty) are skipped.
+        run: |
+          for dir in catalog/*/ infra/; do
+            if ! compgen -G "${dir}*.tf" > /dev/null; then
+              echo "skipping ${dir}: no .tf files"
+              continue
+            fi
+            echo "::group::${dir}"
+            terraform -chdir="${dir}" init -backend=false -input=false
+            terraform -chdir="${dir}" validate
+            echo "::endgroup::"
+          done
