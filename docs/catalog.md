@@ -104,6 +104,27 @@ masked in summaries, so a sensitive variable can't be `required` (the agent coul
 `variables.tf` but left out of the manifest, so neither the user nor the LLM can set them. Give them a default in
 Terraform.
 
+- `rp_name_suffix` (`string`, default `""`): a short value from the request ID (up to 8 lowercase letters or digits).
+  The resource's DigitalOcean name is `<name>-<rp_name_suffix>`, so names never clash in the shared account. Set the
+  manifest's `name` `maxLength` to the resource's name limit minus 9 (for `-` and the suffix).
+
+**Referencing the user's own droplets** (a firewall's targets, a database's trusted sources): never take a tag, name
+or DigitalOcean ID. Take an array of droplet **request IDs** (`items.pattern` a lowercase GUID, `maxItems` the
+provider's limit), named `droplet_request_ids` or `<purpose>_droplet_request_ids`, and have the module turn each into
+its `rp-<requestId>` tag. The manifest can only check the shape, so:
+
+- **#14** must, at `propose_request` and again at confirm, reject the request unless every ID is a `droplet` request
+  owned by the requesting user (admins included) and `Succeeded`.
+- **#17**'s `list_my_resources` must return the request ID and type of the user's own resources only.
+
+A free-form tag would let a user name another user's `rp-<requestId>` or the shared `resource-provisioner` tag. Request
+IDs are never reused, so a tag can't later match someone else's droplet.
+
+**Rules across variables** ("at least one of these two lists") can't be written in a manifest. Say the rule in each
+variable's `description` and enforce it in Terraform: a `lifecycle` `precondition` (variable `validation` can only
+refer to other variables from Terraform 1.9). It then fails at plan, after confirm, so #14 may want to check it at
+`propose_request` too.
+
 ## Outputs
 
 List every output in `outputs.tf`, with `name`, `description` and `sensitive`. A sensitive output (a password, a
@@ -188,7 +209,7 @@ Droplet (#10), cloud firewall (#12) and Spaces bucket (#13) are planned; each ad
 
 | ID | What it is |
 | --- | --- |
-| `postgres` | A single-node managed PostgreSQL cluster ($15 or $30 a month), six regions, PostgreSQL 16, 17 or 18, with an optional database and user. See [Managed Postgres](#managed-postgres). |
+| `postgres` | A single-node managed PostgreSQL cluster ($15 or $30 a month), six regions, PostgreSQL 16, 17 or 18, with an app database and non-admin user, reachable only from the user's own droplets and listed IPv4 addresses. See [Managed Postgres](#managed-postgres). |
 
 ### Managed Postgres
 
@@ -199,11 +220,34 @@ Droplet (#10), cloud firewall (#12) and Spaces bucket (#13) are planned; each ad
   `db-s-1vcpu-1gb` (default), `db-s-1vcpu-2gb`; regions `nyc3` (default), `sfo3`, `ams3`, `lon1`, `fra1`, `sgp1`;
   versions `18` (default), `17`, `16`. Version 15 is left out because new clusters can't use it after May 2027, and
   14 already can't. Always `node_count = 1`.
-- **Variables:** `postgres_version`, not `version`, which Terraform reserves. `database_name` and `user_name` are
-  optional; each creates a `digitalocean_database_db` or `digitalocean_database_user` when given. The patterns refuse
-  names the cluster already uses (`defaultdb`, `doadmin`, `postgres`, `template0/1`, `pg_*`).
-- **Outputs:** `id`, `host`, `port`, `database`, `user`, and the sensitive `password` and `uri`. They describe the
-  requested database and user, or the cluster's `defaultdb` and `doadmin` when none was asked for. `uri` is built in
-  `outputs.tf` (`postgresql://user:password@host:port/database?sslmode=require`) because the cluster's own `uri` is
-  always for `doadmin`.
-- **Network:** no trusted sources are set, so the cluster accepts TLS connections from any IP with the password.
+- **Variables:** `postgres_version`, not `version`, which Terraform reserves.
+- **App database and user, always created:** `database_name` (default `app`) and `user_name` (default `app_user`)
+  become a `digitalocean_database_db` and a non-admin `digitalocean_database_user`. The manifest patterns and the
+  Terraform validations refuse names the cluster already uses (`defaultdb`, `doadmin`, `postgres`, `template0/1`,
+  `pg_*`).
+- **Restricted access, never open:** a `digitalocean_database_firewall` (trusted sources) always has at least one
+  rule, and the cluster is unreachable from anywhere else
+  ([trusted sources](https://docs.digitalocean.com/products/databases/postgresql/how-to/secure/)). Sources:
+  - `allowed_droplet_request_ids`: up to 10 of the user's own droplets, as in
+    [Referencing the user's own droplets](#variables); each becomes a `tag` rule on `rp-<requestId>`. Ownership is
+    checked by #14, not here.
+  - `allowed_ip_addresses`: up to 10 IPv4 CIDRs, `/8` to `/32`. DigitalOcean's trusted sources don't take IPv6.
+    Prefixes shorter than `/8` are refused, so with 10 entries at most 10/256 of IPv4 space can be listed and
+    `0.0.0.0/0` can't.
+
+  Both default to `[]`, and at least one source in total is required. The manifest can't say that (see
+  [Rules across variables](#variables)), so both descriptions state it and a `precondition` on the firewall fails the
+  plan when both are empty. DigitalOcean allows 100 rules per cluster; 20 at most stays well under.
+- **Outputs:** `id`, `host`, `port`, `database`, `user` and the sensitive `password` and `uri` are always the app
+  user's. `uri` is built in `outputs.tf` (`postgresql://user:password@host:port/database?sslmode=require`) because
+  the cluster's own `uri` is for `doadmin`. The sensitive `admin_password` and `admin_uri` (`doadmin` on `defaultdb`)
+  are kept separately: users have no DigitalOcean console access, so this is their only admin route, for example to
+  grant the app user `CREATE` on a schema (on PostgreSQL 15+, a user that doesn't own the database can't create
+  tables in `public` by default).
+- **Name:** `<name>-<rp_name_suffix>`; `name` is 3 to 34 characters, so the whole is at most 43. DigitalOcean doesn't
+  document a name limit for PostgreSQL clusters. 43 is the limit it documents for its managed vector database
+  clusters ([quickstart](https://docs.digitalocean.com/products/vector-databases/getting-started/quickstart/)), and
+  the cluster name also goes into its hostname, so keeping it short leaves room in that DNS label.
+- **Connecting an app:** run the app on a droplet listed in `allowed_droplet_request_ids` and connect with the `uri`
+  output, or `host`, `port`, `database`, `user` and `password` with TLS on (`sslmode=require`). Plain connections
+  are refused.
