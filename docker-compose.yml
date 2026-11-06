@@ -1,0 +1,86 @@
+# Local development services. Start with `docker compose up -d`; see docs/auth-setup.md.
+# Every password here is a local-only default. Nothing in this file is used when deployed (#21).
+services:
+  # ──────────────────────────────────────────
+  # App database
+  # Connection string: Host=localhost;Port=5432;Database=resource_provisioner;Username=rp;Password=dev_password
+  # ──────────────────────────────────────────
+  postgres-app:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: resource_provisioner
+      POSTGRES_USER: rp
+      POSTGRES_PASSWORD: dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-app-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rp -d resource_provisioner"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────
+  # Keycloak database, separate from the app's. Exposed on 5433 to avoid clashing with the app DB.
+  # ──────────────────────────────────────────
+  postgres-keycloak:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-keycloak-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────
+  # Keycloak
+  # Admin console: http://localhost:8080/admin (bootstrap admin from KC_BOOTSTRAP_ADMIN_*, default admin / admin)
+  # Issuer: http://localhost:8080/realms/resource-provisioner
+  # --import-realm imports keycloak/realm-export.json on first start only; it skips a realm that already exists.
+  # ──────────────────────────────────────────
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.6
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres-keycloak:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak_password
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:-admin}
+      KC_HTTP_PORT: 8080
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    depends_on:
+      postgres-keycloak:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────
+  # MailHog: catches every email Keycloak sends (invites, password resets).
+  # Inbox: http://localhost:8025 · SMTP: mailhog:1025 inside compose, localhost:1025 outside
+  # ──────────────────────────────────────────
+  mailhog:
+    image: mailhog/mailhog
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    logging:
+      driver: "none"
+    restart: unless-stopped
+
+volumes:
+  postgres-app-data:
+  postgres-keycloak-data:
