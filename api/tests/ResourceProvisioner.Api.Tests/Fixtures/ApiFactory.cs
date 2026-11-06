@@ -32,7 +32,8 @@ public class ApiFactory : WebApplicationFactory<Program>
         .AddAuthentication(TestAuthHandler.SchemeName)
         .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>(TestAuthHandler.SchemeName, _ => { });
 
-      services.AddTransient<IStartupFilter, TestEndpoints>();
+      // Controllers in this test assembly (TestAdminController) aren't discovered by default; add them.
+      services.AddControllers().AddApplicationPart(typeof(ApiFactory).Assembly);
     });
 
     builder.ConfigureServices(services =>
