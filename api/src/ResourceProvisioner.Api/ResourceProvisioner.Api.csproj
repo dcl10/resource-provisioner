@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <RootNamespace>ResourceProvisioner.Api</RootNamespace>
+    <AssemblyName>ResourceProvisioner.Api</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <UserSecretsId>f325db08-579c-427b-8006-e102415a1ed9</UserSecretsId>
+  </PropertyGroup>
+
+  <!-- Versions are managed centrally in api/Directory.Packages.props -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <!-- Design-time only: lets dotnet ef build migrations -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <!-- Npgsql only requires an older Relational; reference it so it matches the other EF Core packages -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
+  </ItemGroup>
+
+</Project>
