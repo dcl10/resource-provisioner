@@ -8,10 +8,10 @@
       "name": "name",
       "label": "Name",
       "type": "string",
-      "description": "Hostname: starts with a lowercase letter, then lowercase letters, digits and hyphens, at most 63 characters.",
+      "description": "Hostname: starts with a lowercase letter, then lowercase letters, digits and hyphens, at most 54 characters. A short suffix from the request is added to it.",
       "required": true,
       "pattern": "^[a-z][a-z0-9-]*$",
-      "maxLength": 63
+      "maxLength": 54
     },
     {
       "name": "region",
