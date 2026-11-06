@@ -106,6 +106,10 @@ masked in summaries, so a sensitive variable can't be `required` (the agent coul
 Terraform. Every module takes the tags as `rp_tags` (`list(string)`, default `[]`) and puts them on each resource it
 creates; a request that sets `rp_tags` is rejected as an unknown field.
 
+- `rp_name_suffix` (`string`, default `""`): a short value from the request ID (up to 8 lowercase letters or digits).
+  The resource's DigitalOcean name is `<name>-<rp_name_suffix>`, so names never clash in the shared account. Set the
+  manifest's `name` `maxLength` to the resource's name limit minus 9 (for `-` and the suffix).
+
 **Provider credentials** never appear as variables. A module declares an empty `provider` block, and the runner passes
 the token in the environment (`DIGITALOCEAN_TOKEN` for the `digitalocean/digitalocean` provider).
 
@@ -207,4 +211,5 @@ Managed Postgres (#11), cloud firewall (#12) and Spaces bucket (#13) are planned
   `ssh root@<ipv4_address>`. It is not added as a DigitalOcean account SSH key: the account is shared by every user,
   and DigitalOcean refuses the same key twice, so a second droplet with the same key would fail. Because no account
   key is attached, DigitalOcean emails a root password to the account owner; it works only on the web console.
+- **Name:** `<name>-<rp_name_suffix>`; `name` is at most 54 characters, keeping the hostname within DigitalOcean's 63.
 - **Outputs:** `id`, `ipv4_address`, `tags`.
