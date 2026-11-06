@@ -36,12 +36,14 @@ api/
 ├── Directory.Packages.props     # Central Package Management: every NuGet version lives here
 ├── .config/dotnet-tools.json    # dotnet-ef, pinned to the EF Core version
 ├── src/ResourceProvisioner.Api/
-│   ├── Program.cs               # minimal API host: options, DbContext, GET /health
+│   ├── Program.cs               # minimal API host: options, auth, DbContext, endpoints
+│   ├── Auth/                    # roles, policies, realm roles mapping, ICurrentUser
 │   ├── Config/                  # typed options, one class per config section
 │   ├── Data/                    # AppDbContext, design-time factory, Migrations/
+│   ├── Endpoints/               # minimal API endpoint groups (GET /api/me)
 │   └── Extensions/              # service registration helpers
 └── tests/ResourceProvisioner.Api.Tests/
-    └── Fixtures/ApiFactory.cs   # WebApplicationFactory on in-memory SQLite
+    └── Fixtures/                # ApiFactory (WebApplicationFactory on in-memory SQLite), TestAuthHandler
 ```
 
 Run it from `api/`:
@@ -64,6 +66,10 @@ may be empty at startup; the features that use them check for them.
 | Key | Default | Secret |
 | --- | --- | --- |
 | `ConnectionStrings:DefaultConnection` | none | yes |
+| `Keycloak:AuthServerUrl` | `http://localhost:8080` | no |
+| `Keycloak:Realm` | `resource-provisioner` | no |
+| `Keycloak:Resource` | `rp-api` (the JWT audience) | no |
+| `Keycloak:Secret` | none (the `rp-api` client secret, used for invites) | yes |
 | `Anthropic:ApiKey` | none | yes |
 | `Anthropic:Model` | `claude-sonnet-5-5` | no |
 | `Anthropic:Effort` | `low` (`low`, `medium`, `high`, `xhigh` or `max`) | no |
@@ -78,6 +84,7 @@ Secrets never go in `appsettings*.json`. Locally they live in user-secrets, from
 
 ```bash
 dotnet user-secrets --project src/ResourceProvisioner.Api set "ConnectionStrings:DefaultConnection" "Host=localhost;Port=5432;Database=resource_provisioner;Username=rp;Password=dev_password"
+dotnet user-secrets --project src/ResourceProvisioner.Api set "Keycloak:Secret" "<rp-api client secret>"
 dotnet user-secrets --project src/ResourceProvisioner.Api set "Anthropic:ApiKey" "<key>"
 dotnet user-secrets --project src/ResourceProvisioner.Api set "DigitalOcean:Token" "<token>"
 ```
