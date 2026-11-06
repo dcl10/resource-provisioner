@@ -1,6 +1,5 @@
 using Microsoft.EntityFrameworkCore;
 using ResourceProvisioner.Api.Data;
-using ResourceProvisioner.Api.Endpoints;
 using ResourceProvisioner.Api.Extensions;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -14,6 +13,7 @@ builder.Services.AddKeycloakAuth(builder.Configuration, builder.Environment);
 builder.Services.AddDbContext<AppDbContext>(options =>
   options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+builder.Services.AddControllers();
 builder.Services.AddHealthChecks();
 
 var app = builder.Build();
@@ -21,9 +21,10 @@ var app = builder.Build();
 app.UseAuthentication();
 app.UseAuthorization();
 
-// The one anonymous endpoint, for container health checks.
-app.MapHealthChecks("/health").AllowAnonymous();
+app.MapControllers();
 
-app.MapMeEndpoints();
+// The one anonymous endpoint, for container health checks. Not a controller: ASP.NET Core's health checks
+// middleware serves it.
+app.MapHealthChecks("/health").AllowAnonymous();
 
 app.Run();
