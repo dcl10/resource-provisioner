@@ -72,6 +72,9 @@ C# language preferences. Do not override or duplicate its rules. In `web/`, Pret
   hand-edit `components/ui/*`; customise with `className` at the call site. Forms use shadcn's `field` component with
   react-hook-form + zod (there is no `form` component in `base-nova`). Icons from `lucide-react` only. The full stack
   is listed in [docs/web.md](docs/web.md); don't add a library that duplicates one already there.
+- `web/`: the browser never holds a Keycloak token. Read the user with `getCurrentUser()` behind `<Suspense>` and pass
+  only that to Client Components, never the session; call the API through `/api/proxy/*`. See
+  [docs/web.md](docs/web.md#sign-in-and-the-session).
 - `api/`: controllers (`[ApiController]`, one per resource in `Controllers/`), not minimal APIs. Keep them thin;
   logic belongs in services behind interfaces so tests can fake them. Request and response types go in `Models/`.
 - `catalog/`: every module is run through `terraform fmt`. Each module's `resource.json` must match its `variables.tf`.
