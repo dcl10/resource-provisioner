@@ -97,7 +97,7 @@ gets a new file and an index entry. Keep `AGENTS.md` identical to `CLAUDE.md`.
 
 ### Backend
 
-- **Framework:** xUnit, in `api.Tests/`
+- **Framework:** xUnit, in `api/tests/ResourceProvisioner.Api.Tests/`; run `dotnet test` from `api/`
 - **Attributes:** `[Fact]` for single cases, `[Theory]` + `[InlineData]` for parameterised cases
 - **Naming:** `MethodName_ExpectedBehaviour_Condition`
 - **Pattern:** `WebApplicationFactory` integration tests on SQLite for endpoints and middleware, with a test auth
