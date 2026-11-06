@@ -36,18 +36,20 @@ api/
 ├── Directory.Packages.props     # Central Package Management: every NuGet version lives here
 ├── .config/dotnet-tools.json    # dotnet-ef, pinned to the EF Core version
 ├── src/ResourceProvisioner.Api/
-│   ├── Program.cs               # host setup: options, auth, DbContext, catalog, controllers, /health
+│   ├── Program.cs               # host setup: options, auth, invitations, DbContext, catalog, controllers, /health
 │   ├── Auth/                    # roles, policies, realm roles mapping, ICurrentUser
 │   ├── Config/                  # typed options, one class per config section
 │   ├── Controllers/             # API controllers, one per resource (MeController: GET /api/me,
-│   │                            # CatalogController: GET /api/catalog)
+│   │                            # CatalogController: GET /api/catalog, InvitationsController: /api/invitations)
 │   ├── Data/                    # AppDbContext, design-time factory, Migrations/
 │   ├── Extensions/              # service registration helpers
-│   ├── Models/                  # request and response types
-│   └── ResourceCatalog/         # manifest types, loader and checks, ICatalogService (see catalog.md)
+│   ├── Models/                  # request and response types, the Invitation entity
+│   ├── ResourceCatalog/         # manifest types, loader and checks, ICatalogService (see catalog.md)
+│   └── Services/                # Keycloak/ (IKeycloakUserAdmin over the admin API), Invitations/ (see auth-setup.md)
 └── tests/ResourceProvisioner.Api.Tests/
     └── Fixtures/                # ApiFactory (WebApplicationFactory on in-memory SQLite), TestAuthHandler,
-                                 # TestAdminController (test-only admin endpoint), TempCatalog,
+                                 # TestAdminController (test-only admin endpoint), InMemoryKeycloakUserAdmin,
+                                 # TempCatalog,
                                  # catalog/ (fixture resource types, not real modules)
 ```
 
