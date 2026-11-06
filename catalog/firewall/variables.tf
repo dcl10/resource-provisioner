@@ -102,3 +102,15 @@ variable "rp_tags" {
   type    = list(string)
   default = []
 }
+
+# Set by the runner, not the request: a short value from the request ID (up to 8 lowercase
+# letters or digits), appended to the name so names never clash in the shared account.
+variable "rp_name_suffix" {
+  type    = string
+  default = ""
+
+  validation {
+    condition     = can(regex("^[a-z0-9]{0,8}$", var.rp_name_suffix))
+    error_message = "rp_name_suffix must be at most 8 lowercase letters or digits."
+  }
+}
