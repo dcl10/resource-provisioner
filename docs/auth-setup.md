@@ -146,10 +146,10 @@ proxy route (#7); the browser never holds them.
 - **Claims:** the JWT claim names are kept (`sub`, `email`, `preferred_username`), and the realm roles in
   `realm_access.roles` are copied into standard role claims, so `RequireRole` and `IsInRole` work.
 - **Signed in by default:** the fallback policy requires an authenticated user on every endpoint that doesn't name
-  another policy, so a new endpoint can't be left open by mistake. Only `/health` opts out, with `AllowAnonymous()`.
-  No or an invalid token gets **401**.
-- **Admins:** endpoints only admins can call use `.RequireAuthorization(AuthPolicies.AdminOnly)`, which requires
-  `rp-admin`. A signed-in user without it gets **403**.
+  another policy, so a new endpoint can't be left open by mistake. Only `/health` opts out. No or an invalid token
+  gets **401**, even for routes that don't exist.
+- **Admins:** controllers or actions only admins can call use `[Authorize(Policy = AuthPolicies.AdminOnly)]`, which
+  requires `rp-admin`. A signed-in user without it gets **403**.
 - **The current user:** inject `ICurrentUser` for `UserId` (the `sub`, which is what data is owned by), `Email` and
   `IsAdmin`. Scope queries to `UserId` unless `IsAdmin`. `GET /api/me` returns these three, which is a quick way to
   check a token.

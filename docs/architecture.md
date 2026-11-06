@@ -36,14 +36,16 @@ api/
 ├── Directory.Packages.props     # Central Package Management: every NuGet version lives here
 ├── .config/dotnet-tools.json    # dotnet-ef, pinned to the EF Core version
 ├── src/ResourceProvisioner.Api/
-│   ├── Program.cs               # minimal API host: options, auth, DbContext, endpoints
+│   ├── Program.cs               # host setup: options, auth, DbContext, controllers, /health
 │   ├── Auth/                    # roles, policies, realm roles mapping, ICurrentUser
 │   ├── Config/                  # typed options, one class per config section
+│   ├── Controllers/             # API controllers, one per resource (MeController: GET /api/me)
 │   ├── Data/                    # AppDbContext, design-time factory, Migrations/
-│   ├── Endpoints/               # minimal API endpoint groups (GET /api/me)
-│   └── Extensions/              # service registration helpers
+│   ├── Extensions/              # service registration helpers
+│   └── Models/                  # request and response types
 └── tests/ResourceProvisioner.Api.Tests/
-    └── Fixtures/                # ApiFactory (WebApplicationFactory on in-memory SQLite), TestAuthHandler
+    └── Fixtures/                # ApiFactory (WebApplicationFactory on in-memory SQLite), TestAuthHandler,
+                                 # TestAdminController (test-only admin endpoint)
 ```
 
 Run it from `api/`:
