@@ -11,6 +11,9 @@
   <ItemGroup>
     <!-- Validates Keycloak-issued access tokens -->
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+    <!-- Keycloak admin API client and the rp-api service account's client-credentials tokens (invitations) -->
+    <PackageReference Include="Duende.AccessTokenManagement" />
+    <PackageReference Include="Keycloak.AuthServices.Sdk.Kiota" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
     <!-- Design-time only: lets dotnet ef build migrations -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
