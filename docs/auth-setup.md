@@ -8,6 +8,7 @@ invited from the app.
 - [What the realm import creates](#what-the-realm-import-creates)
 - [Client settings](#client-settings)
 - [Client secrets](#client-secrets)
+- [How the web app signs in](#how-the-web-app-signs-in)
 - [How the API checks sign-in](#how-the-api-checks-sign-in)
 - [Bootstrapping the first admin](#bootstrapping-the-first-admin)
 - [Re-importing the realm](#re-importing-the-realm)
@@ -120,14 +121,17 @@ console, switch to the `resource-provisioner` realm, go to **Clients → `<clien
 | `rp-api` | API user-secrets, from `api/`: `dotnet user-secrets --project src/ResourceProvisioner.Api set "Keycloak:Secret" "<secret>"` |
 | `rp-web` | `web/.env.local` as `AUTH_KEYCLOAK_SECRET` |
 
-`web/.env.local` also needs the rest of the Auth.js settings (set up in #7):
+`web/.env.local` also needs the rest of the web app's settings. Copy [web/.env.example](../web/.env.example) and fill
+in the two blanks:
 
-```bash
-AUTH_SECRET=<run: npx auth secret>
-AUTH_KEYCLOAK_ID=rp-web
-AUTH_KEYCLOAK_SECRET=<rp-web secret>
-AUTH_KEYCLOAK_ISSUER=http://localhost:8080/realms/resource-provisioner
-```
+| Variable | Value |
+| --- | --- |
+| `AUTH_SECRET` | Encrypts the session cookie. Generate one with `npx auth secret`. Changing it signs everyone out. |
+| `AUTH_KEYCLOAK_ID` | `rp-web` |
+| `AUTH_KEYCLOAK_SECRET` | the `rp-web` client secret |
+| `AUTH_KEYCLOAK_ISSUER` | `http://localhost:8080/realms/resource-provisioner` |
+| `AUTH_URL` | The app's public URL, `http://localhost:3000` locally. `npm run dev` works without it, but a production build (`npm run start`, or deployed) refuses to sign in unless it, or `AUTH_TRUST_HOST=true`, is set. Federated sign-out returns here. |
+| `API_URL` | Where the API proxy forwards to, `http://localhost:5000` locally |
 
 `.env*` files are gitignored, apart from `.env.example`.
 
@@ -135,10 +139,39 @@ AUTH_KEYCLOAK_ISSUER=http://localhost:8080/realms/resource-provisioner
 `.env.local` and restart the API or web app. The old secret stops working straight away. Re-importing the realm
 (below) also generates new secrets.
 
+## How the web app signs in
+
+The Next.js server signs users in with Auth.js v5 and its Keycloak provider, as the confidential client `rp-web`
+(authorization code flow with PKCE `S256` and state). Code is in `web/lib/auth/`; the patterns come from MidlandsHub's
+`frontend/lib/auth/`.
+
+- **Session:** an Auth.js JWT session, kept in an encrypted, HTTP-only cookie. It holds Keycloak's access, ID and
+  refresh tokens, the access token's expiry and the user's realm roles.
+- **Roles:** read from `realm_access.roles` in the access token at sign-in and on every refresh. `rp-admin` makes
+  `isAdmin` true, which shows the Users link. Hiding the link is cosmetic: the API checks the role itself.
+- **Token refresh:** the `jwt` callback swaps the refresh token for a new access token at Keycloak's token endpoint
+  once the access token is within 30 seconds of expiring (Keycloak's default lifetime is 5 minutes). If Keycloak
+  refuses, for example because the SSO session ended, the session is marked failed and the next request goes to the
+  sign-in page.
+- **Every page needs sign-in:** `web/proxy.ts` runs Auth.js's `authorized` callback before every request except
+  Auth.js's own endpoints and static files. Signed out, a page redirects to `/sign-in?callbackUrl=...` and
+  `/api/proxy/*` answers 401. `/sign-in` is the only open page; its button starts the Keycloak login and returns to
+  the callback URL (only paths on this site are accepted).
+- **The browser never sees a token:** server code gets the tokens from `auth()`, but Auth.js's
+  `/api/auth/session` endpoint, which the browser can call, returns only the user's name and email, the expiry and any
+  error. The browser calls the API through `/api/proxy/<path>`, a route handler that adds
+  `Authorization: Bearer <access token>` and forwards to `<API_URL>/api/<path>`. It passes on only `Accept`,
+  `Accept-Language`, `Content-Type` and `Last-Event-ID` (never cookies) and streams the response back, so server-sent
+  events pass through.
+- **Federated sign-out:** **Sign out** in the account menu clears the session cookie, then sends the browser to
+  Keycloak's end-session endpoint with `id_token_hint`, `client_id` and `post_logout_redirect_uri` set to the app's
+  URL. That ends the Keycloak session as well, so the next sign-in asks for a password again. The return URL has to
+  match `rp-web`'s **Valid post logout redirect URIs**.
+
 ## How the API checks sign-in
 
 The API accepts Keycloak access tokens as `Authorization: Bearer <token>`. The web app's server sends them through its
-proxy route (#7); the browser never holds them.
+proxy route ([above](#how-the-web-app-signs-in)); the browser never holds them.
 
 - **Token validation:** issuer `{Keycloak:AuthServerUrl}/realms/{Keycloak:Realm}` (signing keys from its discovery
   document), audience `rp-api` (added to `rp-web` tokens by the audience mapper), lifetime with 30 seconds' clock
