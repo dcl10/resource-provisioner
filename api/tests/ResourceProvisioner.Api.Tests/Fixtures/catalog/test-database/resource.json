@@ -1,0 +1,39 @@
+{
+  "id": "test-database",
+  "displayName": "Test database",
+  "description": "A fixture resource type that references droplets and has a rule across variables. Not a real module.",
+  "costHint": "Free: it never runs.",
+  "variables": [
+    {
+      "name": "name",
+      "type": "string",
+      "description": "Database name.",
+      "required": true
+    },
+    {
+      "name": "allowed_droplet_request_ids",
+      "type": "array",
+      "description": "Request IDs of the user's own droplets that may connect.",
+      "maxItems": 3,
+      "default": [],
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      }
+    },
+    {
+      "name": "allowed_ip_addresses",
+      "type": "array",
+      "description": "IPv4 CIDRs that may connect.",
+      "default": [],
+      "items": { "type": "string" }
+    }
+  ],
+  "atLeastOneOf": [
+    ["allowed_droplet_request_ids", "allowed_ip_addresses"]
+  ],
+  "outputs": [
+    { "name": "host", "description": "Hostname." },
+    { "name": "password", "description": "Password.", "sensitive": true }
+  ]
+}
