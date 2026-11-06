@@ -131,12 +131,26 @@ public class FirewallManifestTests
   }
 
   [Theory]
-  [InlineData("rp_tags")]
-  [InlineData("tags")]
-  public void ValidateVariables_RejectsTags_WhenSetByRequest(string field)
+  [InlineData(54, true)]
+  [InlineData(55, false)]
+  public void ValidateVariables_LeavesRoomForSuffix_WhenCheckingNameLength(int length, bool valid)
   {
     var input = Valid();
-    input[field] = new JsonArray("resource-provisioner");
+    input["name"] = new string('a', length);
+
+    var result = _catalog.ValidateVariables("firewall", input);
+
+    Assert.Equal(valid, result.IsValid);
+  }
+
+  [Theory]
+  [InlineData("rp_tags")]
+  [InlineData("rp_name_suffix")]
+  [InlineData("tags")]
+  public void ValidateVariables_RejectsRunnerVariable_WhenSetByRequest(string field)
+  {
+    var input = Valid();
+    input[field] = "resource-provisioner";
 
     var result = _catalog.ValidateVariables("firewall", input);
 
