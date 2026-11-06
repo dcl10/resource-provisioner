@@ -159,6 +159,15 @@ public class PostgresManifestTests
   }
 
   [Fact]
+  public void ValidateVariables_RequiresASource_WhenNeitherDropletsNorAddressesGiven()
+  {
+    var result = _catalog.ValidateVariables("postgres", JsonNode.Parse("""{ "name": "app-db" }""")!.AsObject());
+
+    Assert.Contains("allowed_droplet_request_ids", result.Errors.Keys);
+    Assert.Contains("allowed_ip_addresses", result.Errors.Keys);
+  }
+
+  [Fact]
   public void Manifest_MarksOutputsSensitive_OnlyWhenTheyHoldAPassword()
   {
     var sensitive = Manifest.Outputs.Where(o => o.Sensitive).Select(o => o.Name).Order();
