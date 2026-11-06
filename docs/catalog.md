@@ -184,8 +184,26 @@ No API or agent code changes.
 
 ## Current types
 
-None yet. Droplet (#10), managed Postgres (#11), cloud firewall (#12) and Spaces bucket (#13) are planned; each adds
-a row to this table.
+Droplet (#10), cloud firewall (#12) and Spaces bucket (#13) are planned; each adds a row to this table.
 
 | ID | What it is |
 | --- | --- |
+| `postgres` | A single-node managed PostgreSQL cluster ($15 or $30 a month), six regions, PostgreSQL 16, 17 or 18, with an optional database and user. See [Managed Postgres](#managed-postgres). |
+
+### Managed Postgres
+
+- **Allow-lists** (checked on 2026-11-06 against DigitalOcean's
+  [pricing](https://www.digitalocean.com/pricing/managed-databases),
+  [regional availability](https://docs.digitalocean.com/platform/regional-availability/) and
+  [version support](https://docs.digitalocean.com/products/databases/version-support-policy/) pages): sizes
+  `db-s-1vcpu-1gb` (default), `db-s-1vcpu-2gb`; regions `nyc3` (default), `sfo3`, `ams3`, `lon1`, `fra1`, `sgp1`;
+  versions `18` (default), `17`, `16`. Version 15 is left out because new clusters can't use it after May 2027, and
+  14 already can't. Always `node_count = 1`.
+- **Variables:** `postgres_version`, not `version`, which Terraform reserves. `database_name` and `user_name` are
+  optional; each creates a `digitalocean_database_db` or `digitalocean_database_user` when given. The patterns refuse
+  names the cluster already uses (`defaultdb`, `doadmin`, `postgres`, `template0/1`, `pg_*`).
+- **Outputs:** `id`, `host`, `port`, `database`, `user`, and the sensitive `password` and `uri`. They describe the
+  requested database and user, or the cluster's `defaultdb` and `doadmin` when none was asked for. `uri` is built in
+  `outputs.tf` (`postgresql://user:password@host:port/database?sslmode=require`) because the cluster's own `uri` is
+  always for `doadmin`.
+- **Network:** no trusted sources are set, so the cluster accepts TLS connections from any IP with the password.
