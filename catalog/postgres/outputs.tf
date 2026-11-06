@@ -11,15 +11,15 @@ output "port" {
 }
 
 output "database" {
-  value = local.database
+  value = digitalocean_database_db.this.name
 }
 
 output "user" {
-  value = local.user
+  value = digitalocean_database_user.this.name
 }
 
 output "password" {
-  value     = local.password
+  value     = digitalocean_database_user.this.password
   sensitive = true
 }
 
@@ -27,11 +27,24 @@ output "password" {
 output "uri" {
   value = format(
     "postgresql://%s:%s@%s:%d/%s?sslmode=require",
-    urlencode(local.user),
-    urlencode(local.password),
+    urlencode(digitalocean_database_user.this.name),
+    urlencode(digitalocean_database_user.this.password),
     digitalocean_database_cluster.this.host,
     digitalocean_database_cluster.this.port,
-    local.database,
+    digitalocean_database_db.this.name,
   )
+  sensitive = true
+}
+
+# doadmin's credentials. Users have no DigitalOcean console access, so this is their only admin
+# route, for example to grant the app user CREATE on a schema (PostgreSQL 15+).
+output "admin_password" {
+  value     = digitalocean_database_cluster.this.password
+  sensitive = true
+}
+
+# The cluster's own URI: doadmin on defaultdb, sslmode=require.
+output "admin_uri" {
+  value     = digitalocean_database_cluster.this.uri
   sensitive = true
 }
