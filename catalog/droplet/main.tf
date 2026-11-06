@@ -1,5 +1,6 @@
 resource "digitalocean_droplet" "this" {
-  name       = var.name
+  # <name>-<rp_name_suffix>; just <name> when the suffix is empty (only outside the runner).
+  name       = join("-", compact([var.name, var.rp_name_suffix]))
   region     = var.region
   size       = var.size
   image      = var.image
