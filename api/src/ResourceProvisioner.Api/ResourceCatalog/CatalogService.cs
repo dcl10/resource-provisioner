@@ -34,6 +34,7 @@ public class CatalogService(IReadOnlyList<CatalogEntry> entries) : ICatalogServi
     }
 
     var normalized = VariableValidator.ValidateObject(manifest.Variables, values, "", errors);
+    VariableValidator.CheckAtLeastOneOf(manifest.AtLeastOneOf ?? [], normalized, errors);
     return new VariableValidationResult(normalized, errors.ToDictionary());
   }
 }

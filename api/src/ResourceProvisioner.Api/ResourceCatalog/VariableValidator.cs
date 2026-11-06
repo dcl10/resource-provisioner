@@ -76,6 +76,41 @@ internal static class VariableValidator
       _ => throw new ArgumentOutOfRangeException(nameof(spec), spec.Type, "Unknown variable type."),
     };
 
+  /// <summary>
+  /// Checks the manifest's <c>atLeastOneOf</c> rules against <paramref name="values"/> (defaults already applied):
+  /// each group needs at least one variable that is set, meaning not null, an empty string or an empty array. A group
+  /// is skipped while one of its variables has its own errors, so a bad value isn't also reported as missing. The
+  /// error goes on every variable in the group.
+  /// </summary>
+  public static void CheckAtLeastOneOf(
+    IReadOnlyList<IReadOnlyList<string>> groups,
+    JsonObject values,
+    ValidationErrors errors)
+  {
+    foreach (var group in groups)
+    {
+      if (group.Any(errors.HasErrorsFor) || group.Any(name => IsSet(values[name])))
+      {
+        continue;
+      }
+
+      var message = $"Give at least one of {string.Join(", ", group)}.";
+      foreach (var name in group)
+      {
+        errors.Add(name, message);
+      }
+    }
+  }
+
+  private static bool IsSet(JsonNode? value) =>
+    value switch
+    {
+      null => false,
+      JsonArray array => array.Count > 0,
+      JsonValue v when v.GetValueKind() == JsonValueKind.String => v.GetValue<string>().Length > 0,
+      _ => true,
+    };
+
   /// <summary>Reads a JSON number as a decimal, or null if it isn't one or is out of range.</summary>
   public static decimal? ReadNumber(JsonNode? value) =>
     value is JsonValue v && v.GetValueKind() == JsonValueKind.Number &&
@@ -249,6 +284,11 @@ internal sealed class ValidationErrors
     messages.Add(message);
     Count++;
   }
+
+  /// <summary>Whether the variable <paramref name="name"/>, or anything inside it, has a problem.</summary>
+  public bool HasErrorsFor(string name) =>
+    _errors.Keys.Any(key => key == name ||
+                            (key.StartsWith(name, StringComparison.Ordinal) && key[name.Length] is '[' or '.'));
 
   /// <summary>The problems, one array of messages per field path.</summary>
   public IReadOnlyDictionary<string, string[]> ToDictionary() =>
