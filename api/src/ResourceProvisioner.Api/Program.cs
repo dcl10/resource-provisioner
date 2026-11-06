@@ -16,6 +16,9 @@ builder.Services.AddInvitations(builder.Configuration);
 builder.Services.AddDbContext<AppDbContext>(options =>
   options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+// Resource types from catalog/<type>/resource.json, loaded at startup; an invalid manifest stops the app.
+builder.Services.AddCatalog();
+
 builder.Services.AddControllers();
 builder.Services.AddHealthChecks();
 

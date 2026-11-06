@@ -77,7 +77,8 @@ C# language preferences. Do not override or duplicate its rules. In `web/`, Pret
   [docs/web.md](docs/web.md#sign-in-and-the-session).
 - `api/`: controllers (`[ApiController]`, one per resource in `Controllers/`), not minimal APIs. Keep them thin;
   logic belongs in services behind interfaces so tests can fake them. Request and response types go in `Models/`.
-- `catalog/`: every module is run through `terraform fmt`. Each module's `resource.json` must match its `variables.tf`.
+- `catalog/`: every module is run through `terraform fmt`. Each module's `resource.json` must match its `variables.tf`
+  and `outputs.tf`; the API won't start otherwise. The manifest format is in [docs/catalog.md](docs/catalog.md).
 
 ---
 

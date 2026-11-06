@@ -36,16 +36,19 @@ api/
 ├── Directory.Packages.props     # Central Package Management: every NuGet version lives here
 ├── .config/dotnet-tools.json    # dotnet-ef, pinned to the EF Core version
 ├── src/ResourceProvisioner.Api/
-│   ├── Program.cs               # host setup: options, auth, DbContext, controllers, /health
+│   ├── Program.cs               # host setup: options, auth, DbContext, catalog, controllers, /health
 │   ├── Auth/                    # roles, policies, realm roles mapping, ICurrentUser
 │   ├── Config/                  # typed options, one class per config section
-│   ├── Controllers/             # API controllers, one per resource (MeController: GET /api/me)
+│   ├── Controllers/             # API controllers, one per resource (MeController: GET /api/me,
+│   │                            # CatalogController: GET /api/catalog)
 │   ├── Data/                    # AppDbContext, design-time factory, Migrations/
 │   ├── Extensions/              # service registration helpers
-│   └── Models/                  # request and response types
+│   ├── Models/                  # request and response types
+│   └── ResourceCatalog/         # manifest types, loader and checks, ICatalogService (see catalog.md)
 └── tests/ResourceProvisioner.Api.Tests/
     └── Fixtures/                # ApiFactory (WebApplicationFactory on in-memory SQLite), TestAuthHandler,
-                                 # TestAdminController (test-only admin endpoint)
+                                 # TestAdminController (test-only admin endpoint), TempCatalog,
+                                 # catalog/ (fixture resource types, not real modules)
 ```
 
 Run it from `api/`:
@@ -62,8 +65,9 @@ with `dotnet ef migrations add <Name> --project src/ResourceProvisioner.Api -o D
 
 ### Configuration
 
-Options are bound from configuration and validated when the app starts, so an invalid value stops startup. Secrets
-may be empty at startup; the features that use them check for them.
+Options are bound from configuration and validated when the app starts, so an invalid value stops startup; so does an
+invalid `resource.json`, since the catalog loads at startup too. Secrets may be empty at startup; the features that
+use them check for them.
 
 | Key | Default | Secret |
 | --- | --- | --- |
@@ -80,6 +84,7 @@ may be empty at startup; the features that use them check for them.
 | `Anthropic:Effort` | `low` (`low`, `medium`, `high`, `xhigh` or `max`) | no |
 | `DigitalOcean:Token` | none | yes |
 | `Spaces:AccessId` / `Spaces:SecretKey` | none | yes |
+| `Catalog:Root` | `catalog` (looked for in the content root, then each folder above it; see [catalog.md](catalog.md#where-the-catalog-is)) | no |
 | `Workspaces:Root` | `workspaces` (relative to the working directory) | no |
 | `Limits:MaxActiveRequestsPerUser` | `3` | no |
 | `Limits:MaxActiveRequestsTotal` | `10` | no |

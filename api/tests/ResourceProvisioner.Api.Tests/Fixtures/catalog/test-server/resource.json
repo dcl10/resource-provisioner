@@ -1,0 +1,58 @@
+{
+  "id": "test-server",
+  "displayName": "Test server",
+  "description": "A fixture resource type for tests. Not a real module.",
+  "costHint": "Free: it never runs.",
+  "variables": [
+    {
+      "name": "name",
+      "label": "Name",
+      "type": "string",
+      "description": "Server name: lowercase letters, digits and hyphens.",
+      "required": true,
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "maxLength": 20
+    },
+    {
+      "name": "size",
+      "label": "Size",
+      "type": "string",
+      "description": "Server size.",
+      "allowedValues": ["small", "medium"],
+      "default": "small"
+    },
+    {
+      "name": "node_count",
+      "type": "integer",
+      "description": "Number of nodes.",
+      "minimum": 1,
+      "maximum": 3,
+      "default": 1
+    },
+    {
+      "name": "backups",
+      "type": "boolean",
+      "description": "Whether to take backups.",
+      "default": false
+    },
+    {
+      "name": "tags",
+      "type": "array",
+      "description": "Extra tags.",
+      "items": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+      "maxItems": 2,
+      "default": []
+    },
+    {
+      "name": "admin_password",
+      "type": "string",
+      "description": "Admin password, set by the server.",
+      "sensitive": true
+    }
+  ],
+  "outputs": [
+    { "name": "id", "description": "Server ID." },
+    { "name": "ipv4_address", "description": "Public IPv4 address." },
+    { "name": "root_password", "description": "Root password.", "sensitive": true }
+  ]
+}
