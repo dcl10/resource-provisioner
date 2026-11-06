@@ -5,7 +5,8 @@ locals {
 }
 
 resource "digitalocean_firewall" "this" {
-  name = var.name
+  # <name>-<rp_name_suffix>; just <name> when the suffix is empty (only outside the runner).
+  name = join("-", compact([var.name, var.rp_name_suffix]))
 
   # Not var.rp_tags: on a firewall, `tags` picks the droplets it applies to.
   tags = local.target_tags
