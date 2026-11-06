@@ -6,6 +6,7 @@ invited from the app.
 
 - [Local services](#local-services)
 - [What the realm import creates](#what-the-realm-import-creates)
+- [Client settings](#client-settings)
 - [Client secrets](#client-secrets)
 - [Bootstrapping the first admin](#bootstrapping-the-first-admin)
 - [Re-importing the realm](#re-importing-the-realm)
@@ -50,22 +51,62 @@ On its first start, Keycloak imports [keycloak/realm-export.json](../keycloak/re
 | `rp-user` | Can chat and provision resources. A **default role**, so every user gets it when they're created, including invited users; nothing has to assign it. |
 | `rp-admin` | Sees every user's conversations and requests, and manages invitations. Assigned by hand. |
 
-**Clients**
+**Clients:** `rp-web` and `rp-api`, set up as in [Client settings](#client-settings).
 
-| Client | Used by | Settings |
+## Client settings
+
+The import sets these, so locally there is nothing to do. Use the tables to check a realm, or to set the clients up by
+hand on a Keycloak that doesn't import `realm-export.json`. Create the realm and roles first. The setting names are
+the ones in the Keycloak admin console. Replace `http://localhost:3000` with the app's URL when deployed.
+
+**`rp-web`**: confidential client used by the Next.js server (Auth.js) to sign users in.
+
+| Setting | Value |
+| --- | --- |
+| Client authentication | **On** |
+| Authentication flow | **Standard flow** only (Direct access grants, Implicit flow and the rest off) |
+| Valid redirect URIs | `http://localhost:3000/*` |
+| Valid post logout redirect URIs | `http://localhost:3000/*` (federated sign-out returns here) |
+| Web origins | `http://localhost:3000` |
+| Advanced → Proof Key for Code Exchange Code Challenge Method | `S256` |
+
+Under **Client scopes → `rp-web-dedicated` → Add mapper → By configuration**, add two mappers:
+
+| Mapper type | Name | Settings |
 | --- | --- | --- |
-| `rp-web` | Next.js (Auth.js) | Confidential; standard flow only (no direct grants or implicit flow); PKCE S256; redirect URIs and post-logout redirect URIs `http://localhost:3000/*`; web origin `http://localhost:3000` |
-| `rp-api` | ASP.NET Core API | Confidential; no browser flows; service account enabled |
+| Audience | `rp-api audience` | Included Client Audience `rp-api`; Add to access token **on**; Add to ID token off |
+| User Realm Role | `realm roles` | Token Claim Name `realm_access.roles`; Multivalued on; Add to ID token and Add to access token **on** |
 
-`rp-web` has two token mappers:
+The audience mapper puts `rp-api` in the access token's `aud`, so the API accepts tokens issued to the web app. The
+realm roles mapper makes sure the roles are in both tokens. The web app reads `rp-admin` from there to show admin
+pages, and the API maps the roles into role claims.
 
-- **rp-api audience** adds `rp-api` to the access token's `aud`, so the API accepts tokens issued to the web app.
-- **realm roles** puts the user's realm roles in `realm_access.roles` in the access and ID tokens. The web app reads
-  `rp-admin` from there to show admin pages, and the API maps it into role claims.
+Copy the client secret from the **Credentials** tab into `AUTH_KEYCLOAK_SECRET` (see [Client secrets](#client-secrets)).
 
-The `rp-api` service account has only two `realm-management` roles, `manage-users` and `view-users`. That is
-enough to create users and send them action emails (invites), and nothing more: it can't change clients or realm
-settings. It doesn't need permission to assign roles, because `rp-user` is a default role.
+**`rp-api`**: confidential client for the ASP.NET Core API. It's the JWT audience, and its service account calls the
+Keycloak admin API to send invites.
+
+| Setting | Value |
+| --- | --- |
+| Client authentication | **On** |
+| Authentication flow | **Service accounts roles** only (Standard flow off: the API never signs users in) |
+| Service accounts roles tab | **Assign role → Filter by clients**: `realm-management` `manage-users` and `view-users`, nothing else |
+
+Copy the client secret from the **Credentials** tab into the API's `Keycloak:Secret`.
+
+`manage-users` and `view-users` are enough to create users and send them action emails (invites), and nothing more:
+the service account can't read or change clients or realm settings. It doesn't need permission to assign roles,
+because `rp-user` is a default role.
+
+**Differences from MidlandsHub**, whose client setup this follows:
+
+- MidlandsHub's API client has standard flow on and the `realm-admin` role. Here it has no browser flow and only the
+  two user-management roles it needs.
+- MidlandsHub seeds its audience and groups mappers into shared client scopes from the API at startup. Here the
+  audience and realm roles mappers sit on `rp-web` directly and come from the realm import. There is no groups mapper,
+  because access is by role.
+- There is no public client yet. MidlandsHub's `midlandshub-public` exists for its Scalar API docs, which this project
+  doesn't have.
 
 ## Client secrets
 
