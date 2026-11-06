@@ -6,6 +6,7 @@ exist yet.
 | Doc | What it covers |
 | --- | --- |
 | [architecture.md](architecture.md) | Components, key design rules, request states, spend caps |
+| [web.md](web.md) | Running the web app, its layout, the frontend stack and shadcn conventions |
 | auth-setup.md *(planned, #5, #8)* | Keycloak realm import, clients, bootstrapping the first admin, the invite flow |
 | catalog.md *(planned, #9–#13)* | The `resource.json` manifest format, adding a resource type, the current types |
 | agent.md *(planned, #17)* | System prompt intent, agent tools, rate limits, model and effort config |
