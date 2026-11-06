@@ -239,12 +239,12 @@ No API or agent code changes.
 
 ## Current types
 
-Managed Postgres (#11) and Spaces bucket (#13) are planned; each adds a row to this table.
-
 | ID | What it is |
 | --- | --- |
 | `droplet` | A Linux VM: the three cheapest Basic sizes ($4, $6, $12 a month), six regions, Ubuntu 22.04/24.04/26.04 LTS or Debian 13. See [Droplet](#droplet). |
 | `firewall` | A free Cloud Firewall on up to five of the user's own droplets, named by their request IDs: typed inbound rules, outbound open to anywhere unless set. See [Cloud Firewall](#cloud-firewall). |
+| `postgres` | A single-node managed PostgreSQL cluster ($15 or $30 a month), six regions, PostgreSQL 16, 17 or 18, with an app database and non-admin user, reachable only from the user's own droplets and listed IPv4 addresses. See [Managed Postgres](#managed-postgres). |
+| `spaces-bucket` | A private Spaces (S3-compatible) bucket in one of six regions, with an access key limited to that bucket. Part of the account's $5 a month Spaces subscription. See [Spaces bucket](#spaces-bucket). |
 
 ### Droplet
 
@@ -285,3 +285,81 @@ Managed Postgres (#11) and Spaces bucket (#13) are planned; each adds a row to t
   tracked by its request only.
 - **Name:** `<name>-<rp_name_suffix>`; `name` is at most 54 characters, keeping the whole within 63.
 - **Outputs:** `id`, `status`, `target_tags`.
+
+### Managed Postgres
+
+- **Allow-lists** (checked on 2026-11-06 against DigitalOcean's
+  [pricing](https://www.digitalocean.com/pricing/managed-databases),
+  [regional availability](https://docs.digitalocean.com/platform/regional-availability/) and
+  [version support](https://docs.digitalocean.com/products/databases/version-support-policy/) pages): sizes
+  `db-s-1vcpu-1gb` (default), `db-s-1vcpu-2gb`; regions `nyc3` (default), `sfo3`, `ams3`, `lon1`, `fra1`, `sgp1`;
+  versions `18` (default), `17`, `16`. Version 15 is left out because new clusters can't use it after May 2027, and
+  14 already can't. Always `node_count = 1`.
+- **Variables:** `postgres_version`, not `version`, which Terraform reserves.
+- **App database and user, always created:** `database_name` (default `app`) and `user_name` (default `app_user`)
+  become a `digitalocean_database_db` and a non-admin `digitalocean_database_user`. The manifest patterns and the
+  Terraform validations refuse names the cluster already uses (`defaultdb`, `doadmin`, `postgres`, `template0/1`,
+  `pg_*`).
+- **Restricted access, never open:** a `digitalocean_database_firewall` (trusted sources) always has at least one
+  rule, and the cluster is unreachable from anywhere else
+  ([trusted sources](https://docs.digitalocean.com/products/databases/postgresql/how-to/secure/)). Sources:
+  - `allowed_droplet_request_ids`: up to 10 of the user's own droplets, as in
+    [Referencing the user's own droplets](#variables); each becomes a `tag` rule on `rp-<requestId>`. Ownership is
+    checked by #14, not here.
+  - `allowed_ip_addresses`: up to 10 IPv4 CIDRs, `/8` to `/32`. DigitalOcean's trusted sources don't take IPv6.
+    Prefixes shorter than `/8` are refused, so with 10 entries at most 10/256 of IPv4 space can be listed and
+    `0.0.0.0/0` can't.
+
+  Both default to `[]`, and at least one source in total is required: the manifest's `atLeastOneOf` (see
+  [Rules across variables](#rules-across-variables)) refuses a request with neither at `propose_request` and confirm,
+  both descriptions state it for the agent, and a `precondition` on the firewall still fails the plan as a backstop. DigitalOcean allows 100 rules per cluster; 20 at most stays well under.
+- **Outputs:** `id`, `host`, `port`, `database`, `user` and the sensitive `password` and `uri` are always the app
+  user's. `uri` is built in `outputs.tf` (`postgresql://user:password@host:port/database?sslmode=require`) because
+  the cluster's own `uri` is for `doadmin`. The sensitive `admin_password` and `admin_uri` (`doadmin` on `defaultdb`)
+  are kept separately: users have no DigitalOcean console access, so this is their only admin route, for example to
+  grant the app user `CREATE` on a schema (on PostgreSQL 15+, a user that doesn't own the database can't create
+  tables in `public` by default).
+- **Name:** `<name>-<rp_name_suffix>`; `name` is 3 to 34 characters, so the whole is at most 43. DigitalOcean doesn't
+  document a name limit for PostgreSQL clusters. 43 is the limit it documents for its managed vector database
+  clusters ([quickstart](https://docs.digitalocean.com/products/vector-databases/getting-started/quickstart/)), and
+  the cluster name also goes into its hostname, so keeping it short leaves room in that DNS label.
+- **Connecting an app:** run the app on a droplet listed in `allowed_droplet_request_ids` and connect with the `uri`
+  output, or `host`, `port`, `database`, `user` and `password` with TLS on (`sslmode=require`). Plain connections
+  are refused.
+
+### Spaces bucket
+
+Checked on 2026-11-06 against DigitalOcean's Spaces docs ([create a bucket](https://docs.digitalocean.com/products/spaces/how-to/create/),
+[limits](https://docs.digitalocean.com/products/spaces/details/limits/),
+[pricing](https://docs.digitalocean.com/products/spaces/details/pricing/),
+[availability](https://docs.digitalocean.com/products/spaces/details/availability/),
+[access keys](https://docs.digitalocean.com/products/spaces/how-to/manage-access/)) and the provider's
+[`digitalocean_spaces_bucket`](https://registry.terraform.io/providers/digitalocean/digitalocean/latest/docs/resources/spaces_bucket)
+and [`digitalocean_spaces_key`](https://registry.terraform.io/providers/digitalocean/digitalocean/latest/docs/resources/spaces_key).
+
+- **Credentials:** the bucket is created with the account's Spaces keys, which the provider reads from
+  `SPACES_ACCESS_KEY_ID` and `SPACES_SECRET_ACCESS_KEY` (the runner sets them from `Spaces:AccessId` /
+  `Spaces:SecretKey`; they must be a full-access key, since only those can create buckets). The bucket's own key is
+  created through the API with `DIGITALOCEAN_TOKEN`.
+- **Access for the user:** the account's keys reach every bucket, so they are never handed out. Instead the module
+  creates a `digitalocean_spaces_key` with one `readwrite` grant on this bucket (read, write and delete objects in it,
+  nothing else) and returns it as the sensitive `access_key_id` and `secret_access_key` outputs. A bucket with a
+  per-bucket key can't also use an S3 bucket policy. DigitalOcean allows 200 keys and 100 buckets per account.
+- **Private only:** `acl` is always `private` and isn't a variable. `public-read` would make the bucket's listing
+  public; users who need a public file can share a presigned URL instead.
+- **Name:** `<name>-<rp_name_suffix>`. Bucket names are unique across all of DigitalOcean and become a DNS name
+  (`<bucket>.<region>.digitaloceanspaces.com`): 3 to 63 lowercase letters, digits and hyphens, starting with a letter
+  or digit. `name` is 3 to 54 characters and also ends with a letter or digit; the suffix makes a clash with another
+  account's bucket unlikely. A deleted bucket's name stays reserved for a week.
+- **Regions:** `nyc3` (default), `sfo3`, `ams3`, `lon1`, `fra1`, `sgp1`, the same six as the other types. The price
+  is the same everywhere.
+- **Cost:** Spaces is a $5 a month subscription on the account, covering 250 GiB of storage and 1 TiB of outbound
+  transfer across all buckets, then $0.02 per GiB stored and $0.01 per GiB transferred. It's billed while any bucket
+  exists, so the first bucket in the account costs $5 a month and the rest share it. The `description` tells the
+  agent to say so.
+- **Destroy:** `force_destroy = true`, so destroying the request deletes the bucket's objects too, rather than failing
+  and leaving a billed bucket behind.
+- **`rp_tags` is declared but unused:** neither `digitalocean_spaces_bucket` nor `digitalocean_spaces_key` takes tags.
+  Ownership of a bucket is tracked by its request only.
+- **Outputs:** `name`, `region`, `bucket_domain_name`, `endpoint` (use `https://<endpoint>` as the S3 endpoint URL),
+  and the sensitive `access_key_id` and `secret_access_key`.

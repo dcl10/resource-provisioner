@@ -1,0 +1,98 @@
+{
+  "id": "postgres",
+  "displayName": "Managed Postgres",
+  "description": "A DigitalOcean managed PostgreSQL database cluster with a single node, with one database and one non-admin user for your app, reached over TLS with a password. Pick this when you need a Postgres database without running a server yourself. Access is restricted: only the user's own droplets named in allowed_droplet_request_ids and the IPv4 addresses in allowed_ip_addresses can connect, at least one of the two is needed, and the database is unreachable from anywhere else.",
+  "costHint": "About $15 to $30 a month, depending on size.",
+  "variables": [
+    {
+      "name": "name",
+      "label": "Name",
+      "type": "string",
+      "description": "Cluster name: 3 to 34 characters, starts with a lowercase letter, then lowercase letters, digits and hyphens, not ending in a hyphen. A short suffix from the request is added to it.",
+      "required": true,
+      "pattern": "^[a-z][a-z0-9-]*[a-z0-9]$",
+      "minLength": 3,
+      "maxLength": 34
+    },
+    {
+      "name": "region",
+      "label": "Region",
+      "type": "string",
+      "description": "Datacenter: nyc3 (New York), sfo3 (San Francisco), ams3 (Amsterdam), lon1 (London), fra1 (Frankfurt) or sgp1 (Singapore).",
+      "allowedValues": ["nyc3", "sfo3", "ams3", "lon1", "fra1", "sgp1"],
+      "default": "nyc3"
+    },
+    {
+      "name": "size",
+      "label": "Size",
+      "type": "string",
+      "description": "db-s-1vcpu-1gb (1 vCPU, 1 GB RAM, 10 GiB storage, about $15/month) or db-s-1vcpu-2gb (1 vCPU, 2 GB RAM, 30 GiB storage, about $30/month). Always a single node, so not highly available.",
+      "allowedValues": ["db-s-1vcpu-1gb", "db-s-1vcpu-2gb"],
+      "default": "db-s-1vcpu-1gb"
+    },
+    {
+      "name": "postgres_version",
+      "label": "PostgreSQL version",
+      "type": "string",
+      "description": "PostgreSQL major version: 18 (newest), 17 or 16.",
+      "allowedValues": ["18", "17", "16"],
+      "default": "18"
+    },
+    {
+      "name": "database_name",
+      "label": "Database",
+      "type": "string",
+      "description": "The database to create for the app (default app). Lowercase letters, digits and underscores, starting with a letter, at most 63 characters; not defaultdb, postgres, template0 or template1.",
+      "pattern": "^(?!(defaultdb|postgres|template0|template1)$)[a-z][a-z0-9_]*$",
+      "maxLength": 63,
+      "default": "app"
+    },
+    {
+      "name": "user_name",
+      "label": "User",
+      "type": "string",
+      "description": "The non-admin database user to create for the app (default app_user); DigitalOcean generates its password. Lowercase letters, digits and underscores, starting with a letter, at most 63 characters; not doadmin or postgres, and not starting with pg_.",
+      "pattern": "^(?!(doadmin|postgres)$)(?!pg_)[a-z][a-z0-9_]*$",
+      "maxLength": 63,
+      "default": "app_user"
+    },
+    {
+      "name": "allowed_droplet_request_ids",
+      "label": "Allowed droplets",
+      "type": "array",
+      "description": "The request IDs of the user's own droplets that may connect, up to 10, taken from list_my_resources (a lowercase GUID such as 3f2b8c1e-5d4a-4e6f-9a7b-1c2d3e4f5a6b). Only droplets the user requested and that are provisioned are accepted. Never use a droplet name, a DigitalOcean droplet ID or a tag. Give at least one droplet here or one address in allowed_ip_addresses: with neither, the request fails. An app on a droplet must have that droplet listed here to reach the database.",
+      "maxItems": 10,
+      "default": [],
+      "items": {
+        "type": "string",
+        "description": "A droplet request ID (lowercase GUID).",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      }
+    },
+    {
+      "name": "allowed_ip_addresses",
+      "label": "Allowed IP addresses",
+      "type": "array",
+      "description": "IPv4 addresses that may connect, up to 10, as CIDRs from /8 to /32: suggest the user's own IP as x.x.x.x/32. IPv6 isn't supported by DigitalOcean here, and 0.0.0.0/0 (anywhere) is refused. Give at least one address here or one droplet in allowed_droplet_request_ids: with neither, the request fails.",
+      "maxItems": 10,
+      "default": [],
+      "items": {
+        "type": "string",
+        "description": "An IPv4 CIDR from /8 to /32, such as 203.0.113.7/32.",
+        "pattern": "^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12][0-9]|[89])$",
+        "maxLength": 18
+      }
+    }
+  ],
+  "outputs": [
+    { "name": "id", "description": "Database cluster ID." },
+    { "name": "host", "description": "Public hostname to connect to, reachable only from the allowed droplets and IP addresses." },
+    { "name": "port", "description": "Port to connect to. Connections must use TLS (sslmode=require)." },
+    { "name": "database", "description": "The app's database." },
+    { "name": "user", "description": "The app's non-admin user." },
+    { "name": "password", "description": "Password for the app's user.", "sensitive": true },
+    { "name": "uri", "description": "Connection URI for the app's user and database, including the password.", "sensitive": true },
+    { "name": "admin_password", "description": "Password for the cluster's admin user, doadmin.", "sensitive": true },
+    { "name": "admin_uri", "description": "Connection URI for doadmin on defaultdb, including the password; for admin tasks such as granting the app's user CREATE on a schema.", "sensitive": true }
+  ]
+}
