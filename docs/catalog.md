@@ -125,6 +125,11 @@ its `rp-<requestId>` tag. The manifest can only check the shape, so:
 A free-form tag would let a user name another user's `rp-<requestId>` or the shared `resource-provisioner` tag. Request
 IDs are never reused, so a tag can't later match someone else's droplet.
 
+**Rules across variables** ("at least one of these two lists") can't be written in a manifest. Say the rule in each
+variable's `description` and enforce it in Terraform: a `lifecycle` `precondition` (variable `validation` can only
+refer to other variables from Terraform 1.9). It then fails at plan, after confirm, so #14 may want to check it at
+`propose_request` too.
+
 ## Outputs
 
 List every output in `outputs.tf`, with `name`, `description` and `sensitive`. A sensitive output (a password, a
@@ -205,12 +210,11 @@ No API or agent code changes.
 
 ## Current types
 
-Managed Postgres (#11) is planned; it adds a row to this table.
-
 | ID | What it is |
 | --- | --- |
 | `droplet` | A Linux VM: the three cheapest Basic sizes ($4, $6, $12 a month), six regions, Ubuntu 22.04/24.04/26.04 LTS or Debian 13. See [Droplet](#droplet). |
 | `firewall` | A free Cloud Firewall on up to five of the user's own droplets, named by their request IDs: typed inbound rules, outbound open to anywhere unless set. See [Cloud Firewall](#cloud-firewall). |
+| `postgres` | A single-node managed PostgreSQL cluster ($15 or $30 a month), six regions, PostgreSQL 16, 17 or 18, with an app database and non-admin user, reachable only from the user's own droplets and listed IPv4 addresses. See [Managed Postgres](#managed-postgres). |
 | `spaces-bucket` | A private Spaces (S3-compatible) bucket in one of six regions, with an access key limited to that bucket. Part of the account's $5 a month Spaces subscription. See [Spaces bucket](#spaces-bucket). |
 
 ### Droplet
@@ -252,6 +256,47 @@ Managed Postgres (#11) is planned; it adds a row to this table.
   tracked by its request only.
 - **Name:** `<name>-<rp_name_suffix>`; `name` is at most 54 characters, keeping the whole within 63.
 - **Outputs:** `id`, `status`, `target_tags`.
+
+### Managed Postgres
+
+- **Allow-lists** (checked on 2026-11-06 against DigitalOcean's
+  [pricing](https://www.digitalocean.com/pricing/managed-databases),
+  [regional availability](https://docs.digitalocean.com/platform/regional-availability/) and
+  [version support](https://docs.digitalocean.com/products/databases/version-support-policy/) pages): sizes
+  `db-s-1vcpu-1gb` (default), `db-s-1vcpu-2gb`; regions `nyc3` (default), `sfo3`, `ams3`, `lon1`, `fra1`, `sgp1`;
+  versions `18` (default), `17`, `16`. Version 15 is left out because new clusters can't use it after May 2027, and
+  14 already can't. Always `node_count = 1`.
+- **Variables:** `postgres_version`, not `version`, which Terraform reserves.
+- **App database and user, always created:** `database_name` (default `app`) and `user_name` (default `app_user`)
+  become a `digitalocean_database_db` and a non-admin `digitalocean_database_user`. The manifest patterns and the
+  Terraform validations refuse names the cluster already uses (`defaultdb`, `doadmin`, `postgres`, `template0/1`,
+  `pg_*`).
+- **Restricted access, never open:** a `digitalocean_database_firewall` (trusted sources) always has at least one
+  rule, and the cluster is unreachable from anywhere else
+  ([trusted sources](https://docs.digitalocean.com/products/databases/postgresql/how-to/secure/)). Sources:
+  - `allowed_droplet_request_ids`: up to 10 of the user's own droplets, as in
+    [Referencing the user's own droplets](#variables); each becomes a `tag` rule on `rp-<requestId>`. Ownership is
+    checked by #14, not here.
+  - `allowed_ip_addresses`: up to 10 IPv4 CIDRs, `/8` to `/32`. DigitalOcean's trusted sources don't take IPv6.
+    Prefixes shorter than `/8` are refused, so with 10 entries at most 10/256 of IPv4 space can be listed and
+    `0.0.0.0/0` can't.
+
+  Both default to `[]`, and at least one source in total is required. The manifest can't say that (see
+  [Rules across variables](#variables)), so both descriptions state it and a `precondition` on the firewall fails the
+  plan when both are empty. DigitalOcean allows 100 rules per cluster; 20 at most stays well under.
+- **Outputs:** `id`, `host`, `port`, `database`, `user` and the sensitive `password` and `uri` are always the app
+  user's. `uri` is built in `outputs.tf` (`postgresql://user:password@host:port/database?sslmode=require`) because
+  the cluster's own `uri` is for `doadmin`. The sensitive `admin_password` and `admin_uri` (`doadmin` on `defaultdb`)
+  are kept separately: users have no DigitalOcean console access, so this is their only admin route, for example to
+  grant the app user `CREATE` on a schema (on PostgreSQL 15+, a user that doesn't own the database can't create
+  tables in `public` by default).
+- **Name:** `<name>-<rp_name_suffix>`; `name` is 3 to 34 characters, so the whole is at most 43. DigitalOcean doesn't
+  document a name limit for PostgreSQL clusters. 43 is the limit it documents for its managed vector database
+  clusters ([quickstart](https://docs.digitalocean.com/products/vector-databases/getting-started/quickstart/)), and
+  the cluster name also goes into its hostname, so keeping it short leaves room in that DNS label.
+- **Connecting an app:** run the app on a droplet listed in `allowed_droplet_request_ids` and connect with the `uri`
+  output, or `host`, `port`, `database`, `user` and `password` with TLS on (`sslmode=require`). Plain connections
+  are refused.
 
 ### Spaces bucket
 
