@@ -1,2 +1,36 @@
 # resource-provisioner
-Using LLMs + agents to stand up infrastructure
+
+A proof of concept for provisioning infrastructure through chat. You ask a chat bot for a resource (a droplet, a
+managed Postgres database, a cloud firewall or a Spaces bucket). An agent backed by Claude works out which resource
+type you need and asks for the variables it requires. After you confirm, it provisions the resource with Terraform on
+DigitalOcean.
+
+## Why
+
+At work, getting simple, low-risk resources provisioned can take weeks: you search through self-service forms, then
+the ticket waits in an outsourced queue. Time-limited projects lose money and reputation while they wait. This POC
+tests whether a guarded chat agent over a vetted catalog of Terraform modules can do the same job in minutes.
+
+Sign-in is invite-only, through Keycloak, and per-user limits cap LLM and cloud spend.
+
+## Repo layout
+
+```
+/
+├── web/        Next.js chat UI (App Router, Auth.js + Keycloak, shadcn/ui)
+├── api/        ASP.NET Core 10 API: agent, catalog, Terraform runner, invitations
+├── catalog/    One Terraform module + resource.json manifest per resource type
+├── keycloak/   Realm export imported on first start
+├── infra/      Terraform for the droplet that hosts the POC (separate state)
+└── docs/       How everything works, one file per topic
+```
+
+## Docs
+
+Start at [docs/README.md](docs/README.md). The design rules are in [docs/architecture.md](docs/architecture.md).
+
+Contributors and coding agents: see [CLAUDE.md](CLAUDE.md) (identical to [AGENTS.md](AGENTS.md)).
+
+## License
+
+[MIT](LICENSE)
