@@ -1,0 +1,55 @@
+{
+  "id": "droplet",
+  "displayName": "Droplet",
+  "description": "A Linux virtual machine (Ubuntu or Debian) with a public IPv4 address. Pick this for a server you can SSH into as root with your own SSH key.",
+  "costHint": "About $4 to $12 a month, depending on size.",
+  "variables": [
+    {
+      "name": "name",
+      "label": "Name",
+      "type": "string",
+      "description": "Hostname: starts with a lowercase letter, then lowercase letters, digits and hyphens, at most 54 characters. A short suffix from the request is added to it.",
+      "required": true,
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "maxLength": 54
+    },
+    {
+      "name": "region",
+      "label": "Region",
+      "type": "string",
+      "description": "Datacenter: nyc3 (New York), sfo3 (San Francisco), ams3 (Amsterdam), lon1 (London), fra1 (Frankfurt) or sgp1 (Singapore).",
+      "allowedValues": ["nyc3", "sfo3", "ams3", "lon1", "fra1", "sgp1"],
+      "default": "nyc3"
+    },
+    {
+      "name": "size",
+      "label": "Size",
+      "type": "string",
+      "description": "s-1vcpu-512mb-10gb (1 vCPU, 512 MB RAM, 10 GB disk, $4/month), s-1vcpu-1gb (1 vCPU, 1 GB RAM, 25 GB disk, $6/month) or s-1vcpu-2gb (1 vCPU, 2 GB RAM, 50 GB disk, $12/month).",
+      "allowedValues": ["s-1vcpu-512mb-10gb", "s-1vcpu-1gb", "s-1vcpu-2gb"],
+      "default": "s-1vcpu-512mb-10gb"
+    },
+    {
+      "name": "image",
+      "label": "Image",
+      "type": "string",
+      "description": "Operating system: ubuntu-24-04-x64 (Ubuntu 24.04 LTS), ubuntu-26-04-x64 (Ubuntu 26.04 LTS), ubuntu-22-04-x64 (Ubuntu 22.04 LTS) or debian-13-x64 (Debian 13).",
+      "allowedValues": ["ubuntu-24-04-x64", "ubuntu-26-04-x64", "ubuntu-22-04-x64", "debian-13-x64"],
+      "default": "ubuntu-24-04-x64"
+    },
+    {
+      "name": "ssh_public_key",
+      "label": "SSH public key",
+      "type": "string",
+      "description": "The user's SSH public key, one line as in ~/.ssh/id_ed25519.pub: 'ssh-ed25519 AAAA... comment' (ssh-rsa and ecdsa-sha2-nistp256/384/521 also work). It is installed for root and password login is off. Never ask for a private key.",
+      "required": true,
+      "pattern": "^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)) [A-Za-z0-9+/]+={0,3}( [^\\r\\n]*)?$",
+      "maxLength": 2000
+    }
+  ],
+  "outputs": [
+    { "name": "id", "description": "Droplet ID." },
+    { "name": "ipv4_address", "description": "Public IPv4 address. Log in with: ssh root@<address>." },
+    { "name": "tags", "description": "Tags on the droplet: the provisioner's resource-provisioner, rp-<requestId> and rp-owner-<user> tags." }
+  ]
+}

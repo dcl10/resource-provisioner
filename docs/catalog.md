@@ -7,6 +7,7 @@ catalog/droplet/
 ├── main.tf          # the Terraform module
 ├── variables.tf
 ├── outputs.tf
+├── versions.tf      # optional: pins Terraform and the provider
 └── resource.json    # the manifest
 ```
 
@@ -57,7 +58,7 @@ a folder, with no API or agent code change.
 }
 ```
 
-(Illustrative only; the real droplet manifest comes with #10.)
+(Shortened; the real one is [catalog/droplet/resource.json](../catalog/droplet/resource.json).)
 
 | Field | Required | Meaning |
 | --- | --- | --- |
@@ -102,11 +103,15 @@ masked in summaries, so a sensitive variable can't be `required` (the agent coul
 
 **Variables the runner sets** (such as the forced `resource-provisioner` / `rp-<requestId>` tags) are declared in
 `variables.tf` but left out of the manifest, so neither the user nor the LLM can set them. Give them a default in
-Terraform.
+Terraform. Every module takes the tags as `rp_tags` (`list(string)`, default `[]`) and puts them on each resource it
+creates; a request that sets `rp_tags` is rejected as an unknown field.
 
 - `rp_name_suffix` (`string`, default `""`): a short value from the request ID (up to 8 lowercase letters or digits).
   The resource's DigitalOcean name is `<name>-<rp_name_suffix>`, so names never clash in the shared account. Set the
   manifest's `name` `maxLength` to the resource's name limit minus 9 (for `-` and the suffix).
+
+**Provider credentials** never appear as variables. A module declares an empty `provider` block, and the runner passes
+the token in the environment (`DIGITALOCEAN_TOKEN` for the `digitalocean/digitalocean` provider).
 
 **Referencing the user's own droplets** (a firewall's targets, a database's trusted sources): never take a tag, name
 or DigitalOcean ID. Take an array of droplet **request IDs** (`items.pattern` a lowercase GUID, `maxItems` the
@@ -205,11 +210,53 @@ No API or agent code changes.
 
 ## Current types
 
-Droplet (#10), cloud firewall (#12) and Spaces bucket (#13) are planned; each adds a row to this table.
+Spaces bucket (#13) is planned; it adds a row to this table.
 
 | ID | What it is |
 | --- | --- |
+| `droplet` | A Linux VM: the three cheapest Basic sizes ($4, $6, $12 a month), six regions, Ubuntu 22.04/24.04/26.04 LTS or Debian 13. See [Droplet](#droplet). |
+| `firewall` | A free Cloud Firewall on up to five of the user's own droplets, named by their request IDs: typed inbound rules, outbound open to anywhere unless set. See [Cloud Firewall](#cloud-firewall). |
 | `postgres` | A single-node managed PostgreSQL cluster ($15 or $30 a month), six regions, PostgreSQL 16, 17 or 18, with an app database and non-admin user, reachable only from the user's own droplets and listed IPv4 addresses. See [Managed Postgres](#managed-postgres). |
+
+### Droplet
+
+- **Allow-lists** (checked against DigitalOcean's [pricing](https://www.digitalocean.com/pricing/droplets),
+  [regional availability](https://docs.digitalocean.com/platform/regional-availability/) and
+  [images](https://docs.digitalocean.com/products/droplets/details/images/) pages): sizes `s-1vcpu-512mb-10gb`,
+  `s-1vcpu-1gb`, `s-1vcpu-2gb`; regions `nyc3`, `sfo3`, `ams3`, `lon1`, `fra1`, `sgp1`; images `ubuntu-24-04-x64`
+  (default), `ubuntu-26-04-x64`, `ubuntu-22-04-x64`, `debian-13-x64`.
+- **SSH access:** the request carries the user's SSH **public** key (`ssh_public_key`, required, not sensitive).
+  cloud-init installs it for `root` and turns SSH password login off, so the user logs in with
+  `ssh root@<ipv4_address>`. It is not added as a DigitalOcean account SSH key: the account is shared by every user,
+  and DigitalOcean refuses the same key twice, so a second droplet with the same key would fail. Because no account
+  key is attached, DigitalOcean emails a root password to the account owner; it works only on the web console.
+- **Name:** `<name>-<rp_name_suffix>`; `name` is at most 54 characters, keeping the hostname within DigitalOcean's 63.
+- **Outputs:** `id`, `ipv4_address`, `tags`.
+
+### Cloud Firewall
+
+- **Targets:** `droplet_request_ids`, 1 to 5, as in
+  [Referencing the user's own droplets](#variables); the firewall applies to droplets with those `rp-<requestId>` tags.
+  Five is DigitalOcean's tag limit per firewall
+  ([limits](https://docs.digitalocean.com/products/networking/firewalls/details/limits/)). Ownership is checked by #14,
+  not here.
+- **Rules:** `inbound_rules` (required, 1 to 20) and `outbound_rules` (up to 20), each a list of `protocol` (`tcp`,
+  `udp` or `icmp`), `port_range` (`22`, `8000-9000` or `all`; the module drops it for `icmp` and sends `all` as
+  `1-65535`) and `source_addresses` / `destination_addresses` (1 to 10 IPv4 or IPv6 CIDRs). Allow rules only, and
+  addresses only: the provider's `source_tags`, `source_droplet_ids` and the like are left out so a rule can't name
+  other users' resources. 40 rules at most stays under DigitalOcean's 50.
+- **Defaults:** outbound allows tcp, udp and icmp to `0.0.0.0/0` and `::/0`. A DigitalOcean firewall blocks whatever
+  no rule allows, so without that default a droplet couldn't reach DNS or package mirrors. Inbound has no default.
+- **SSH from anywhere** (`0.0.0.0/0` on port 22) is allowed. Droplets are key-only (#10), and a droplet with no
+  firewall is already open on 22, so refusing it would only push users to skip the firewall. The description tells
+  the agent to suggest the user's own `/32` and to warn when the source is anywhere.
+- **Checks:** the manifest's patterns check ports are 1 to 65535 and addresses look like CIDRs. A low-high range
+  (`9000-8000`) and malformed IPv6 pass the manifest but fail the Terraform variable validation at plan time.
+- **`rp_tags` is declared but unused.** A firewall can't carry tags: `digitalocean_firewall`'s `tags` picks the droplets
+  it applies to, so passing `rp_tags` there would attach it to every user's droplets. Ownership of a firewall is
+  tracked by its request only.
+- **Name:** `<name>-<rp_name_suffix>`; `name` is at most 54 characters, keeping the whole within 63.
+- **Outputs:** `id`, `status`, `target_tags`.
 
 ### Managed Postgres
 
