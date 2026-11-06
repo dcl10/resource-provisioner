@@ -1,0 +1,34 @@
+{
+  "id": "spaces-bucket",
+  "displayName": "Spaces bucket",
+  "description": "A private DigitalOcean Spaces bucket: S3-compatible object storage for files, backups and static assets, used with any S3 tool or SDK. Pick this when the user needs to store files rather than run a server or a database. The bucket is always private (no public-read; nothing can be read without a key), and the user gets an access key that works on this bucket only. Destroying the bucket deletes everything in it. Spaces is billed as a $5 a month subscription on the account, which is shared by all its buckets, so tell the user the bucket's cost is part of that.",
+  "costHint": "About $5 a month: the account's Spaces subscription (250 GiB storage and 1 TiB outbound transfer, shared by all buckets), plus $0.02 per GiB stored and $0.01 per GiB transferred beyond that.",
+  "variables": [
+    {
+      "name": "name",
+      "label": "Name",
+      "type": "string",
+      "description": "Bucket name: 3 to 54 characters, lowercase letters, digits and hyphens, starting and ending with a letter or digit. A short suffix from the request is added to it, and the result becomes part of the bucket's address (<name>-<suffix>.<region>.digitaloceanspaces.com), so don't put anything private in it.",
+      "required": true,
+      "pattern": "^[a-z0-9][a-z0-9-]*[a-z0-9]$",
+      "minLength": 3,
+      "maxLength": 54
+    },
+    {
+      "name": "region",
+      "label": "Region",
+      "type": "string",
+      "description": "Datacenter: nyc3 (New York), sfo3 (San Francisco), ams3 (Amsterdam), lon1 (London), fra1 (Frankfurt) or sgp1 (Singapore). The price is the same in every region.",
+      "allowedValues": ["nyc3", "sfo3", "ams3", "lon1", "fra1", "sgp1"],
+      "default": "nyc3"
+    }
+  ],
+  "outputs": [
+    { "name": "name", "description": "The bucket's full name, with the request's suffix." },
+    { "name": "region", "description": "The bucket's region." },
+    { "name": "bucket_domain_name", "description": "The bucket's hostname, such as my-files-ab12cd34.nyc3.digitaloceanspaces.com." },
+    { "name": "endpoint", "description": "The region's S3 endpoint hostname, such as nyc3.digitaloceanspaces.com; use https://<endpoint> as the endpoint URL in S3 tools." },
+    { "name": "access_key_id", "description": "Access key ID of a key that can read, write and delete objects in this bucket only.", "sensitive": true },
+    { "name": "secret_access_key", "description": "Secret for access_key_id.", "sensitive": true }
+  ]
+}
