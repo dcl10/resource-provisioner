@@ -14,10 +14,14 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Services.Keycloak;
+using Services.Provisioning;
+using Services.Terraform;
 
 /// <summary>
-/// Test host for integration tests. The database is an in-memory SQLite connection kept open for the fixture's
-/// lifetime, so tests need neither Docker nor Postgres.
+/// Test host for integration tests. The database is a SQLite file in the temp folder, deleted with the fixture, so
+/// tests need neither Docker nor Postgres. A file rather than one shared in-memory connection, because the Terraform
+/// runner and the logs endpoint use the database from other threads while a test does; each DbContext gets its own
+/// connection, and SQLite's locking keeps them apart.
 /// </summary>
 public class ApiFactory : WebApplicationFactory<Program>
 {
@@ -27,10 +31,16 @@ public class ApiFactory : WebApplicationFactory<Program>
   /// </summary>
   public static readonly string FixtureCatalogRoot = Path.Combine(AppContext.BaseDirectory, "Fixtures", "catalog");
 
-  private readonly SqliteConnection _connection = new("DataSource=:memory:");
+  private readonly string _databasePath = Path.Combine(Path.GetTempPath(), $"rp-test-{Guid.NewGuid():N}.db");
 
   /// <summary>The fake Keycloak admin API the app uses, shared by every request to this factory's host.</summary>
   public InMemoryKeycloakUserAdmin Keycloak { get; } = new();
+
+  /// <summary>The fake Terraform CLI the job processor runs.</summary>
+  public FakeTerraform Terraform { get; } = new();
+
+  /// <summary>A temp folder for request workspaces, deleted with the factory.</summary>
+  public string WorkspacesRoot { get; } = Path.Combine(Path.GetTempPath(), $"rp-workspaces-{Guid.NewGuid():N}");
 
   /// <inheritdoc />
   protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -38,7 +48,13 @@ public class ApiFactory : WebApplicationFactory<Program>
     builder.UseEnvironment("Testing");
 
     builder.ConfigureAppConfiguration(config =>
-      config.AddInMemoryCollection(new Dictionary<string, string?> { ["Catalog:Root"] = FixtureCatalogRoot }));
+      config.AddInMemoryCollection(new Dictionary<string, string?>
+      {
+        ["Catalog:Root"] = FixtureCatalogRoot,
+        ["Workspaces:Root"] = WorkspacesRoot,
+        ["DigitalOcean:Token"] = "test-do-token",
+        ["Runner:LogPollInterval"] = "00:00:00.020",
+      }));
 
     // Tests have no Keycloak: authenticate from the X-Test-Claims header instead of a JWT.
     builder.ConfigureTestServices(services =>
@@ -53,6 +69,13 @@ public class ApiFactory : WebApplicationFactory<Program>
       // Tests never call Keycloak's admin API.
       services.RemoveAll<IKeycloakUserAdmin>();
       services.AddSingleton<IKeycloakUserAdmin>(Keycloak);
+
+      // Tests never run Terraform. The runner's background service is off so tests control when jobs run (and other
+      // tests' confirmed requests stay Queued); tests that need it start a TerraformRunner themselves.
+      services.RemoveAll<ITerraformProcessRunner>();
+      services.AddSingleton<ITerraformProcessRunner>(Terraform);
+      var runner = services.Single(d => d.ImplementationType == typeof(TerraformRunner));
+      services.Remove(runner);
     });
 
     builder.ConfigureServices(services =>
@@ -71,15 +94,13 @@ public class ApiFactory : WebApplicationFactory<Program>
         services.Remove(descriptor);
       }
 
-      services.AddDbContext<AppDbContext>(o => o.UseSqlite(_connection));
+      services.AddDbContext<AppDbContext>(o => o.UseSqlite($"Data Source={_databasePath}"));
     });
   }
 
   /// <inheritdoc />
   protected override IHost CreateHost(IHostBuilder builder)
   {
-    _connection.Open();
-
     var host = base.CreateHost(builder);
 
     using var scope = host.Services.CreateScope();
@@ -134,7 +155,12 @@ public class ApiFactory : WebApplicationFactory<Program>
     base.Dispose(disposing);
     if (disposing)
     {
-      _connection.Dispose();
+      SqliteConnection.ClearAllPools();
+      File.Delete(_databasePath);
+      if (Directory.Exists(WorkspacesRoot))
+      {
+        Directory.Delete(WorkspacesRoot, recursive: true);
+      }
     }
   }
 }
