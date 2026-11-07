@@ -11,6 +11,7 @@ public class RequestStateMachineTests
     (RequestStatus.AwaitingConfirmation, RequestStatus.Queued),
     (RequestStatus.AwaitingConfirmation, RequestStatus.Cancelled),
     (RequestStatus.Queued, RequestStatus.Applying),
+    (RequestStatus.Queued, RequestStatus.Failed),
     (RequestStatus.Applying, RequestStatus.Succeeded),
     (RequestStatus.Applying, RequestStatus.Failed),
     (RequestStatus.Succeeded, RequestStatus.Destroying),
