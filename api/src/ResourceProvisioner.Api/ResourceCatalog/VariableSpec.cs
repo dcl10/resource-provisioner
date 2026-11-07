@@ -29,4 +29,12 @@ public record VariableSpec : ValueSpec
   /// defaulted. Top-level variables only.
   /// </summary>
   public bool Sensitive { get; init; }
+
+  /// <summary>
+  /// The catalog type (its ID, such as <c>droplet</c>) whose request IDs this variable holds: a string, or an array of
+  /// strings. The API checks each ID is the requesting user's own request of that type, pending or provisioned, and
+  /// records it as a dependency, so the referenced request is provisioned first. Top-level variables only.
+  /// </summary>
+  [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+  public string? References { get; init; }
 }
