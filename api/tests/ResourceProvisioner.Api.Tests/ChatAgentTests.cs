@@ -115,6 +115,38 @@ public class ChatAgentTests : IClassFixture<ApiFactory>
   }
 
   [Fact]
+  public async Task Send_ProposesASequence_ReferencingTheEarlierProposal()
+  {
+    var id = await NewConversation();
+    _factory.ChatModel.ReplyToolUse(
+      AgentTools.ProposeRequest,
+      """{"type":"test-server","variables":{"name":"web-1"}}""");
+    _factory.ChatModel.ReplyWith(request =>
+    {
+      // What a model does: read the requestId the first proposal returned, and reference it.
+      var result = ContentBlocks.OfType(request.Messages[^1].Content, "tool_result").Single();
+      var proposal = JsonNode.Parse(result["content"]!.GetValue<string>())!["proposal"]!;
+      var serverId = proposal["requestId"]!.GetValue<string>();
+      var input = $$$"""
+        {"type":"test-database","variables":{"name":"db","allowed_droplet_request_ids":["{{{serverId}}}"]}}
+        """;
+      return [new ChatModelEvent.Completed(
+        new JsonArray(ContentBlocks.ToolUse("toolu_2", AgentTools.ProposeRequest, JsonNode.Parse(input)!.AsObject())),
+        "tool_use")];
+    });
+    _factory.ChatModel.ReplyText("Confirm them both.");
+
+    var events = await Send(id, "a server and a database it can reach");
+
+    var proposals = events.Where(e => e.Type == "proposal").Select(e => e.Data).ToList();
+    Assert.Equal(2, proposals.Count);
+    var serverId = proposals[0]["requestId"]!.GetValue<string>();
+    var dependsOn = proposals[1]["dependsOn"]!.AsArray().Single()!;
+    Assert.Equal(serverId, dependsOn["id"]!.GetValue<string>());
+    Assert.Equal("AwaitingConfirmation", dependsOn["status"]!.GetValue<string>());
+  }
+
+  [Fact]
   public async Task Send_ReturnsValidationErrorsToClaude_WhenProposalIsInvalid()
   {
     var id = await NewConversation();
