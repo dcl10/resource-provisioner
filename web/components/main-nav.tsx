@@ -23,19 +23,37 @@ export const navItems: NavItem[] = [
 ];
 
 /**
- * The main navigation links, with the current section highlighted.
+ * The main navigation links, with the current section highlighted. Reads the URL, which on a route with a dynamic
+ * segment (such as `/chat/[id]`) is only known per request, so it suspends there: render it inside a `<Suspense>`
+ * boundary whose fallback is {@link MainNavLinks} with no `pathname`.
  * @param isAdmin - whether to show admin-only links
  * @returns the nav bar
  */
 export function MainNav({ isAdmin }: { isAdmin: boolean }) {
-  const pathname = usePathname();
+  return <MainNavLinks isAdmin={isAdmin} pathname={usePathname()} />;
+}
 
+/**
+ * The main navigation links, highlighting the section `pathname` is in. Doesn't read the URL itself.
+ * @param isAdmin - whether to show admin-only links
+ * @param pathname - the current path; with none, no link is highlighted
+ * @returns the nav bar
+ */
+export function MainNavLinks({
+  isAdmin,
+  pathname,
+}: {
+  isAdmin: boolean;
+  pathname?: string;
+}) {
   return (
     <nav aria-label="Main" className="flex items-center gap-1">
       {navItems
         .filter((item) => isAdmin || !item.adminOnly)
         .map(({ href, label, icon: Icon }) => {
-          const active = pathname === href || pathname.startsWith(`${href}/`);
+          const active =
+            pathname !== undefined &&
+            (pathname === href || pathname.startsWith(`${href}/`));
 
           return (
             <Link

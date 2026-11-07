@@ -25,6 +25,13 @@ if (!window.matchMedia) {
     }) as MediaQueryList;
 }
 
+// Sonner captures the pointer when a toast is pressed; jsdom has no pointer capture.
+if (!Element.prototype.setPointerCapture) {
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
+  Element.prototype.hasPointerCapture = () => false;
+}
+
 afterEach(() => {
   cleanup();
 });

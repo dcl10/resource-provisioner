@@ -1,0 +1,217 @@
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { ProposalCard } from "@/components/chat/proposal-card";
+import { Providers } from "@/components/providers";
+import type { Proposal } from "@/lib/chat";
+import type { ProvisioningRequest, RequestStatus } from "@/lib/requests";
+
+const push = vi.fn();
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+
+const proposal: Proposal = {
+  requestId: "req-1",
+  type: "droplet",
+  displayName: "Droplet",
+  costHint: "About $4 to $6 a month.",
+  items: [
+    { name: "name", label: "Name", value: "web-1" },
+    { name: "region", label: "Region", value: "lon1" },
+  ],
+};
+
+function request(status: RequestStatus): ProvisioningRequest {
+  return {
+    id: "req-1",
+    ownerId: "user-1",
+    ownerEmail: "user@example.com",
+    type: "droplet",
+    displayName: "Droplet",
+    status,
+    variables: { name: "web-1", region: "lon1" },
+    outputs: null,
+    conversationId: "conv-1",
+    createdAt: "2026-11-07T10:00:00Z",
+    updatedAt: "2026-11-07T10:00:00Z",
+    confirmedAt: null,
+  };
+}
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+let fetchMock: ReturnType<typeof vi.fn>;
+
+/**
+ * Answers GET /requests/req-1 with the request in `initial` status, and the POSTs with `post`. Like the API, a
+ * successful POST changes what GET returns.
+ */
+function mockApi(
+  initial: RequestStatus,
+  post: (url: string) => Response = () => json(request("Queued")),
+) {
+  let current = request(initial);
+  fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method !== "POST") return json(current);
+    const response = post(url);
+    if (response.ok)
+      current = (await response.clone().json()) as ProvisioningRequest;
+    return response;
+  });
+  vi.stubGlobal("fetch", fetchMock);
+}
+
+function posts() {
+  return fetchMock.mock.calls
+    .filter(([, init]) => init?.method === "POST")
+    .map(([url]) => url as string);
+}
+
+/** Finds a button once the request's status has loaded and it's enabled. */
+async function enabledButton(name: string) {
+  const button = await screen.findByRole("button", { name });
+  await waitFor(() => expect(button).toBeEnabled());
+  return button;
+}
+
+function renderCard() {
+  return render(
+    <Providers>
+      <ProposalCard proposal={proposal} />
+    </Providers>,
+  );
+}
+
+describe("ProposalCard", () => {
+  beforeEach(() => {
+    push.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("disables the buttons until the request's status has loaded", () => {
+    mockApi("AwaitingConfirmation");
+    renderCard();
+
+    expect(screen.getByRole("button", { name: "Confirm" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+  });
+
+  it("shows the resource type, its variables and the cost hint", async () => {
+    mockApi("AwaitingConfirmation");
+    renderCard();
+
+    const card = screen.getByRole("generic", { name: "Proposed Droplet" });
+    expect(within(card).getByText("Droplet")).toBeInTheDocument();
+    expect(within(card).getByText("droplet")).toBeInTheDocument();
+    const nameRow = within(card).getByText("Name").closest("tr")!;
+    expect(within(nameRow).getByText("web-1")).toBeInTheDocument();
+    const regionRow = within(card).getByText("Region").closest("tr")!;
+    expect(within(regionRow).getByText("lon1")).toBeInTheDocument();
+    expect(
+      within(card).getByText("About $4 to $6 a month."),
+    ).toBeInTheDocument();
+    expect(
+      await within(card).findByText("Awaiting confirmation"),
+    ).toBeInTheDocument();
+  });
+
+  it("confirms the request, then shows a toast and a link to it", async () => {
+    mockApi("AwaitingConfirmation");
+    const user = userEvent.setup();
+    renderCard();
+
+    await user.click(await enabledButton("Confirm"));
+
+    expect(await screen.findByText("Droplet confirmed")).toBeInTheDocument();
+    expect(posts()).toEqual(["/api/proxy/requests/req-1/confirm"]);
+    expect(screen.getByText("Queued")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Confirm" }),
+    ).not.toBeInTheDocument();
+    const link = screen.getByRole("link", { name: "View request" });
+    expect(link).toHaveAttribute("href", "/requests/req-1");
+
+    await user.click(screen.getByRole("button", { name: "View request" }));
+    expect(push).toHaveBeenCalledWith("/requests/req-1");
+  });
+
+  it("cancels the request", async () => {
+    mockApi("AwaitingConfirmation", () => json(request("Cancelled")));
+    const user = userEvent.setup();
+    renderCard();
+
+    await user.click(await enabledButton("Cancel"));
+
+    expect(
+      await screen.findByText("Droplet proposal cancelled"),
+    ).toBeInTheDocument();
+    expect(posts()).toEqual(["/api/proxy/requests/req-1/cancel"]);
+    expect(screen.getByText("Cancelled")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Confirm" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("explains a spend limit and keeps the buttons", async () => {
+    const detail =
+      "You already have 3 active requests, and each user can have at most 3. Destroy one before confirming another.";
+    mockApi("AwaitingConfirmation", () =>
+      json({ title: "Active request limit reached", detail, status: 409 }, 409),
+    );
+    const user = userEvent.setup();
+    renderCard();
+
+    await user.click(await enabledButton("Confirm"));
+
+    const alert = await screen.findByRole("alert");
+    expect(within(alert).getByText("You're at your limit")).toBeInTheDocument();
+    expect(within(alert).getByText(detail)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Confirm" })).toBeEnabled();
+  });
+
+  it("shows the API's message when the variables are no longer valid", async () => {
+    mockApi("AwaitingConfirmation", () =>
+      json(
+        {
+          title: "The request's variables are no longer valid.",
+          errors: {
+            "droplet_request_ids[0]": ["Droplet request x is Destroyed."],
+          },
+          status: 422,
+        },
+        422,
+      ),
+    );
+    const user = userEvent.setup();
+    renderCard();
+
+    await user.click(await enabledButton("Confirm"));
+
+    const alert = await screen.findByRole("alert");
+    expect(
+      within(alert).getByText("Droplet request x is Destroyed."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the status and a link instead of buttons once confirmed", async () => {
+    mockApi("Succeeded");
+    renderCard();
+
+    expect(await screen.findByText("Provisioned")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Confirm" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View request" })).toHaveAttribute(
+      "href",
+      "/requests/req-1",
+    );
+  });
+});
