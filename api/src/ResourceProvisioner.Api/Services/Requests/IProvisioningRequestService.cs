@@ -77,6 +77,21 @@ public interface IProvisioningRequestService
     CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// The owner's explicit reveal of a request's sensitive outputs (passwords, connection URIs, keys). Owner only, admins
+  /// included: an admin can't read someone else's secrets. Never called on the agent's behalf.
+  /// </summary>
+  /// <param name="id">Request ID.</param>
+  /// <param name="user">The signed-in user; must be the owner.</param>
+  /// <param name="cancellationToken">Cancels the call.</param>
+  /// <returns>The sensitive outputs by name; empty if it has none (yet).</returns>
+  /// <exception cref="KeyNotFoundException">No such request the user can see.</exception>
+  /// <exception cref="RequestForbiddenException">An admin asking for someone else's.</exception>
+  Task<JsonObject> GetSensitiveOutputsAsync(
+    Guid id,
+    RequestUser user,
+    CancellationToken cancellationToken = default);
+
+  /// <summary>
   /// Tears down what a request created: moves it to <see cref="RequestStatus.Destroying"/> and onto the runner's
   /// queue. Allowed from <see cref="RequestStatus.Succeeded"/> and <see cref="RequestStatus.Failed"/>. The owner or
   /// an admin may destroy it, so an admin can clean up a resource someone left running.
