@@ -7,8 +7,12 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { requestQueryKey, useRequest } from "@/components/chat/use-chat";
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/requests/status-badge";
+import {
+  requestQueryKey,
+  requestsQueryKey,
+  useRequest,
+} from "@/components/requests/use-requests";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Card,
@@ -27,7 +31,6 @@ import {
   confirmRequest,
   type ProvisioningRequest,
   requestPath,
-  statusLabels,
 } from "@/lib/requests";
 
 /** The problem title the API gives when confirming would exceed an active-request limit. */
@@ -67,7 +70,10 @@ export function ProposalCard({ proposal }: { proposal: Proposal }) {
   const onSuccess = (updated: ProvisioningRequest) => {
     setProblem(null);
     queryClient.setQueryData(requestQueryKey(requestId), updated);
-    void queryClient.invalidateQueries({ queryKey: ["requests"] });
+    void queryClient.invalidateQueries({
+      queryKey: requestsQueryKey,
+      exact: true,
+    });
   };
   const onError = (error: unknown) => {
     const next = toProblem(error);
@@ -115,11 +121,7 @@ export function ProposalCard({ proposal }: { proposal: Proposal }) {
           Proposed request · <span className="font-mono">{proposal.type}</span>
         </CardDescription>
         <CardAction>
-          {status ? (
-            <Badge variant={awaiting ? "secondary" : "outline"}>
-              {statusLabels[status]}
-            </Badge>
-          ) : null}
+          {status ? <StatusBadge status={status} /> : null}
         </CardAction>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
