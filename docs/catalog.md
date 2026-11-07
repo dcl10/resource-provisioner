@@ -219,7 +219,8 @@ endpoint, it requires sign-in.
 
 ## Mapping to tool schemas
 
-`AgentTools` generates the agent's tool input schemas from the manifests with `strict: true`. Strict mode supports
+`AgentTools` generates the agent's tool input schemas from the manifests, within the keywords strict tool use
+supports, though `propose_request` itself is sent without `strict` ([agent.md](agent.md#tools) says why). Strict mode supports
 `type`, `enum`, `anyOf`, `required`, `description`, nested objects and arrays, and requires
 `additionalProperties: false` on every object. It does **not** support `minimum`/`maximum`, `minLength`/`maxLength` or
 array length constraints, and supports `pattern` only partly (a pattern it can't compile fails the whole request), so
@@ -237,9 +238,9 @@ enforces them on the server. Mapping:
 Because strict mode needs a fixed schema, the nesting in a manifest is finite (no recursive types).
 
 **Size limits.** Every strict schema in a request counts together: at most 24 optional properties (a property not in
-its object's `required`, nested ones included) and 16 `anyOf` parameters (`propose_request` uses one). The catalog's
-five types use 18 optional properties today (24 allowed). `AgentToolsTests.RealCatalog_StaysWithinStrictToolLimits` fails if a new
-type pushes the real catalog over a limit; mark more variables `required`, or drop optional ones, to fit.
+its object's `required`, nested ones included), 16 `anyOf` parameters and 20 strict tools. The variables' schemas are
+only in `propose_request`, which isn't strict, so adding types doesn't use up these limits.
+`AgentToolsTests.RealCatalog_StaysWithinStrictToolLimits` still checks the strict tools.
 
 ## Adding a resource type
 
