@@ -13,6 +13,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Services.Agent;
 using Services.Keycloak;
 using Services.Provisioning;
 using Services.Terraform;
@@ -35,6 +36,9 @@ public class ApiFactory : WebApplicationFactory<Program>
 
   /// <summary>The fake Keycloak admin API the app uses, shared by every request to this factory's host.</summary>
   public InMemoryKeycloakUserAdmin Keycloak { get; } = new();
+
+  /// <summary>The fake Claude the chat agent talks to.</summary>
+  public FakeChatModel ChatModel { get; } = new();
 
   /// <summary>The fake Terraform CLI the job processor runs.</summary>
   public FakeTerraform Terraform { get; } = new();
@@ -72,6 +76,10 @@ public class ApiFactory : WebApplicationFactory<Program>
 
       // Tests never run Terraform. The runner's background service is off so tests control when jobs run (and other
       // tests' confirmed requests stay Queued); tests that need it start a TerraformRunner themselves.
+      // Tests never call Anthropic.
+      services.RemoveAll<IChatModel>();
+      services.AddSingleton<IChatModel>(ChatModel);
+
       services.RemoveAll<ITerraformProcessRunner>();
       services.AddSingleton<ITerraformProcessRunner>(Terraform);
       var runner = services.Single(d => d.ImplementationType == typeof(TerraformRunner));
