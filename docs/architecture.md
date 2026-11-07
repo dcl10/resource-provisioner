@@ -1,7 +1,5 @@
 # Architecture
 
-> The agent loop is filled in by #17.
-
 ## Components
 
 ```
@@ -37,25 +35,27 @@ api/
 ├── .config/dotnet-tools.json    # dotnet-ef, pinned to the EF Core version
 ├── src/ResourceProvisioner.Api/
 │   ├── Program.cs               # host setup: options, auth, invitations, DbContext, catalog, requests, runner,
-│   │                            # controllers, /health
+│   │                            # chat agent and its rate limiter, controllers, /health
 │   ├── Auth/                    # roles, policies, realm roles mapping, ICurrentUser
 │   ├── Config/                  # typed options, one class per config section
 │   ├── Controllers/             # API controllers, one per resource (MeController: GET /api/me,
 │   │                            # CatalogController: GET /api/catalog, InvitationsController: /api/invitations,
-│   │                            # RequestsController: /api/requests)
+│   │                            # RequestsController: /api/requests, ConversationsController: /api/conversations)
 │   ├── Data/                    # AppDbContext, design-time factory, Migrations/
 │   ├── Extensions/              # service registration helpers
-│   ├── Models/                  # request and response types, the Invitation, ProvisioningRequest and JobLogLine
-│   │                            # entities
+│   ├── Models/                  # request and response types, the Invitation, ProvisioningRequest, JobLogLine,
+│   │                            # Conversation and ConversationMessage entities
 │   ├── ResourceCatalog/         # manifest types, loader and checks, ICatalogService (see catalog.md)
 │   └── Services/                # Keycloak/ (IKeycloakUserAdmin over the admin API), Invitations/ (see auth-setup.md),
 │                                # Requests/ (IProvisioningRequestService, the state machine, RunnerVariables, logs),
 │                                # Provisioning/ (the Terraform runner, see provisioning.md),
-│                                # Terraform/ (ITerraformProcessRunner, the only thing that starts the CLI)
+│                                # Terraform/ (ITerraformProcessRunner, the only thing that starts the CLI),
+│                                # Agent/ (the chat agent: IChatModel over Anthropic, tools, loop; see agent.md)
 └── tests/ResourceProvisioner.Api.Tests/
     └── Fixtures/                # ApiFactory (WebApplicationFactory on a temp SQLite file, runner off), TestAuthHandler,
                                  # TestAdminController (test-only admin endpoint), InMemoryKeycloakUserAdmin,
-                                 # FakeTerraform, TempCatalog, RequestSeeding (requests in any status),
+                                 # FakeTerraform, FakeChatModel (scripted Claude), Sse (parses event streams),
+                                 # TempCatalog, RequestSeeding (requests in any status),
                                  # catalog/ (fixture resource types, not real modules)
 ```
 
@@ -148,7 +148,7 @@ tag and the manifests' droplet-reference patterns use.
 
 | Status | Meaning | Moved there by |
 | --- | --- | --- |
-| `AwaitingConfirmation` | Proposed; nothing has happened | the agent's `propose_request` tool (#17) |
+| `AwaitingConfirmation` | Proposed; nothing has happened | the agent's `propose_request` tool ([agent.md](agent.md)) |
 | `Queued` | Confirmed, waiting for the runner | the owner's Confirm (`POST /api/requests/{id}/confirm`) |
 | `Applying` | `terraform apply` is running | the runner ([provisioning.md](provisioning.md)) |
 | `Succeeded` | The resource exists; outputs are stored | the runner |
@@ -219,4 +219,4 @@ request. Over a limit, confirm answers **409** with the title `Active request li
 saying which limit and what to do; the request stays `AwaitingConfirmation`, so it can be confirmed once something is
 destroyed.
 
-The chat rate limit (`Limits:ChatMessagesPerMinute`) is #17's.
+The chat rate limit (`Limits:ChatMessagesPerMinute`, per user) is described in [agent.md](agent.md#rate-limit).

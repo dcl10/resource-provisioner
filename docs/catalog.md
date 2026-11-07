@@ -11,7 +11,7 @@ catalog/droplet/
 └── resource.json    # the manifest
 ```
 
-The manifest is the single source of truth for a type. The agent's tool schemas (#17), the server-side validation of
+The manifest is the single source of truth for a type. The agent's tool schemas ([agent.md](agent.md#tools)), the server-side validation of
 a request's variables and the confirmation summary are all generated from it, so adding a resource type means adding
 a folder, with no API or agent code change.
 
@@ -124,7 +124,8 @@ its `rp-<requestId>` tag. The manifest can only check the shape, so:
   owned by the requesting user (admins included) and `Succeeded`. See
   [architecture.md](architecture.md#ownership). It finds these variables by name, so the loader requires them to be
   top-level arrays of strings.
-- **#17**'s `list_my_resources` must return the request ID and type of the user's own resources only.
+- The agent's `list_my_resources` returns the request ID and type of the user's own resources only, admins included
+  (see [agent.md](agent.md#tools)).
 
 A free-form tag would let a user name another user's `rp-<requestId>` or the shared `resource-provisioner` tag. Request
 IDs are never reused, so a tag can't later match someone else's droplet.
@@ -210,11 +211,13 @@ endpoint, it requires sign-in.
 
 ## Mapping to tool schemas
 
-#17 generates the agent's tool input schemas from the manifests with `strict: true`. Strict mode supports `type`,
-`enum`, `required`, `description`, nested objects and arrays, and requires `additionalProperties: false` on every
-object. It does **not** support `minimum`/`maximum`, `minLength`/`maxLength` or array length constraints, so the
-generator leaves those out and `ValidateVariables` enforces them on the server; state them in `description` too so the
-agent asks for a valid value. Mapping:
+`AgentTools` generates the agent's tool input schemas from the manifests with `strict: true`. Strict mode supports
+`type`, `enum`, `anyOf`, `required`, `description`, nested objects and arrays, and requires
+`additionalProperties: false` on every object. It does **not** support `minimum`/`maximum`, `minLength`/`maxLength` or
+array length constraints, and supports `pattern` only partly (a pattern it can't compile fails the whole request), so
+the generator leaves all of those out and appends them to the property's `description` instead ("Must match the
+regular expression ...", "Length: 3 to 54 characters.", "Range: ...", "Items: ...", "Default: ..."); `ValidateVariables`
+enforces them on the server. Mapping:
 
 - each non-sensitive variable becomes a property; `required: true` variables go in `required`
 - `allowedValues` becomes `enum`; `items` and `properties` map recursively (object fields get their own `required`
@@ -224,6 +227,11 @@ agent asks for a valid value. Mapping:
 - sensitive outputs are never put in a tool result or the prompt
 
 Because strict mode needs a fixed schema, the nesting in a manifest is finite (no recursive types).
+
+**Size limits.** Every strict schema in a request counts together: at most 24 optional properties (a property not in
+its object's `required`, nested ones included) and 16 `anyOf` parameters (`propose_request` uses one). The catalog's
+four types use 12 optional properties today. `AgentToolsTests.RealCatalog_StaysWithinStrictToolLimits` fails if a new
+type pushes the real catalog over a limit; mark more variables `required`, or drop optional ones, to fit.
 
 ## Adding a resource type
 
