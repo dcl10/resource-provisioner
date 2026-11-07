@@ -2,8 +2,8 @@
 
 import { useQuery } from "@tanstack/react-query";
 
+import { retryUnlessClientError } from "@/lib/api";
 import { getConversation, listConversations } from "@/lib/chat";
-import { getRequest } from "@/lib/requests";
 
 /** TanStack Query key for the conversation list. */
 export const conversationsQueryKey = ["conversations"] as const;
@@ -15,15 +15,6 @@ export const conversationsQueryKey = ["conversations"] as const;
  */
 export function conversationQueryKey(id: string) {
   return ["conversations", id] as const;
-}
-
-/**
- * TanStack Query key for one request.
- * @param id - the request ID
- * @returns the key
- */
-export function requestQueryKey(id: string) {
-  return ["requests", id] as const;
 }
 
 /**
@@ -46,17 +37,6 @@ export function useConversation(id: string) {
   return useQuery({
     queryKey: conversationQueryKey(id),
     queryFn: () => getConversation(id),
-  });
-}
-
-/**
- * One request, for a proposal card's current status.
- * @param id - the request ID
- * @returns the query
- */
-export function useRequest(id: string) {
-  return useQuery({
-    queryKey: requestQueryKey(id),
-    queryFn: () => getRequest(id),
+    retry: retryUnlessClientError,
   });
 }
