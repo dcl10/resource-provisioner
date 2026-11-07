@@ -38,6 +38,7 @@ public class RequestsControllerTests(HighLimitApiFactory factory) : IClassFixtur
   [InlineData("GET", $"{Route}/00000000-0000-0000-0000-000000000001")]
   [InlineData("POST", $"{Route}/00000000-0000-0000-0000-000000000001/confirm")]
   [InlineData("POST", $"{Route}/00000000-0000-0000-0000-000000000001/cancel")]
+  [InlineData("POST", $"{Route}/00000000-0000-0000-0000-000000000001/destroy")]
   public async Task Endpoints_ReturnUnauthorized_WithoutCredentials(string method, string url)
   {
     var response = await factory.CreateAnonymousClient().SendAsync(new HttpRequestMessage(new HttpMethod(method), url));
@@ -143,15 +144,7 @@ public class RequestsControllerTests(HighLimitApiFactory factory) : IClassFixtur
 
     await User.PostAsync($"{Route}/{request.Id}/confirm", null);
 
-    // The runner's background service is off in tests, so the queue holds every confirmed request in this class.
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-    await foreach (var id in factory.Services.GetRequiredService<IJobDispatcher>().ReadAllAsync(cts.Token))
-    {
-      if (id == request.Id)
-      {
-        return;
-      }
-    }
+    await AssertQueued(request.Id);
   }
 
   [Theory]
@@ -183,6 +176,88 @@ public class RequestsControllerTests(HighLimitApiFactory factory) : IClassFixtur
 
     Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     Assert.Equal(RequestStatus.AwaitingConfirmation, (await factory.FindRequestAsync(others.Id))!.Status);
+  }
+
+  [Theory]
+  [InlineData(RequestStatus.Succeeded)]
+  [InlineData(RequestStatus.Failed)]
+  public async Task Destroy_QueuesDestroy_ForOwner(RequestStatus status)
+  {
+    var request = await factory.SeedRequestAsync(_userId, status);
+
+    var response = await User.PostAsync($"{Route}/{request.Id}/destroy", null);
+
+    Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    var body = await response.Content.ReadFromJsonAsync<ProvisioningRequestResponse>();
+    Assert.Equal(RequestStatus.Destroying, body!.Status);
+    Assert.Equal(RequestStatus.Destroying, (await factory.FindRequestAsync(request.Id))!.Status);
+    await AssertQueued(request.Id);
+  }
+
+  [Theory]
+  [InlineData(RequestStatus.AwaitingConfirmation)]
+  [InlineData(RequestStatus.Queued)]
+  [InlineData(RequestStatus.Applying)]
+  [InlineData(RequestStatus.Destroying)]
+  [InlineData(RequestStatus.Destroyed)]
+  [InlineData(RequestStatus.Cancelled)]
+  public async Task Destroy_ReturnsConflict_WhenNotSucceededOrFailed(RequestStatus status)
+  {
+    var request = await factory.SeedRequestAsync(_userId, status);
+
+    var response = await User.PostAsync($"{Route}/{request.Id}/destroy", null);
+
+    Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+    var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+    Assert.Equal($"This request is {status}, so it can't be destroyed.", problem!.Detail);
+    Assert.Equal(status, (await factory.FindRequestAsync(request.Id))!.Status);
+  }
+
+  [Fact]
+  public async Task Destroy_ReturnsNotFound_ForAnotherUsersRequest()
+  {
+    var others = await factory.SeedRequestAsync("someone-else", RequestStatus.Succeeded);
+
+    var response = await User.PostAsync($"{Route}/{others.Id}/destroy", null);
+
+    Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    Assert.Equal(RequestStatus.Succeeded, (await factory.FindRequestAsync(others.Id))!.Status);
+  }
+
+  [Fact]
+  public async Task Destroy_QueuesDestroy_ForAdminOnAnotherUsersRequest()
+  {
+    var others = await factory.SeedRequestAsync("someone-else", RequestStatus.Succeeded);
+
+    var response = await factory.CreateAdminClient().PostAsync($"{Route}/{others.Id}/destroy", null);
+
+    Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    Assert.Equal(RequestStatus.Destroying, (await factory.FindRequestAsync(others.Id))!.Status);
+  }
+
+  [Fact]
+  public async Task Destroy_FreesAnActiveSlot_OnceDestroyed()
+  {
+    var active = new List<ProvisioningRequest>();
+    for (var i = 0; i < 3; i++)
+    {
+      active.Add(await factory.SeedRequestAsync(_userId, RequestStatus.Succeeded));
+    }
+
+    var next = await factory.SeedRequestAsync(_userId, RequestStatus.AwaitingConfirmation);
+    await User.PostAsync($"{Route}/{active[0].Id}/destroy", null);
+
+    // Destroying still counts: the resource exists until Terraform has removed it.
+    Assert.Equal(HttpStatusCode.Conflict, (await User.PostAsync($"{Route}/{next.Id}/confirm", null)).StatusCode);
+
+    using (var scope = factory.Services.CreateScope())
+    {
+      await scope.ServiceProvider.GetRequiredService<ITerraformJobProcessor>()
+        .RunAsync(active[0].Id, CancellationToken.None);
+    }
+
+    Assert.Equal(RequestStatus.Destroyed, (await factory.FindRequestAsync(active[0].Id))!.Status);
+    Assert.Equal(HttpStatusCode.OK, (await User.PostAsync($"{Route}/{next.Id}/confirm", null)).StatusCode);
   }
 
   [Theory]
@@ -296,6 +371,22 @@ public class RequestsControllerTests(HighLimitApiFactory factory) : IClassFixtur
     var response = await User.PostAsync($"{Route}/{others.Id}/cancel", null);
 
     Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+  }
+
+  /// <summary>
+  /// Reads the runner's queue until <paramref name="requestId"/> turns up; fails after 5 seconds. The runner's
+  /// background service is off in tests, so the queue holds every request this class confirmed or destroyed.
+  /// </summary>
+  private async Task AssertQueued(Guid requestId)
+  {
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    await foreach (var id in factory.Services.GetRequiredService<IJobDispatcher>().ReadAllAsync(cts.Token))
+    {
+      if (id == requestId)
+      {
+        return;
+      }
+    }
   }
 
   private async Task SetStatus(Guid id, RequestStatus status)
