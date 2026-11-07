@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
 import { Composer } from "@/components/chat/composer";
+import { ConfirmAllButton } from "@/components/chat/confirm-all-button";
 import { Markdown } from "@/components/chat/markdown";
 import { ProposalCard } from "@/components/chat/proposal-card";
 import {
@@ -164,6 +165,9 @@ function MessageView({ message }: { message: ChatMessage }) {
       {message.proposals.map((proposal) => (
         <ProposalCard key={proposal.requestId} proposal={proposal} />
       ))}
+      {message.proposals.length > 1 ? (
+        <ConfirmAllButton proposals={message.proposals} />
+      ) : null}
     </div>
   );
 }
