@@ -21,6 +21,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
   /// <summary>The Terraform runner's log lines, per request.</summary>
   public DbSet<JobLogLine> JobLogLines => Set<JobLogLine>();
 
+  /// <summary>Chats with the agent.</summary>
+  public DbSet<Conversation> Conversations => Set<Conversation>();
+
+  /// <summary>Every turn of every conversation, append-only.</summary>
+  public DbSet<ConversationMessage> ConversationMessages => Set<ConversationMessage>();
+
   /// <inheritdoc />
   protected override void OnModelCreating(ModelBuilder modelBuilder)
   {
@@ -58,6 +64,24 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     {
       outputs.ToTable("RequestSensitiveOutputs");
       outputs.HasKey(x => x.RequestId);
+    });
+
+    modelBuilder.Entity<Conversation>(conversation =>
+    {
+      conversation.Property(x => x.OwnerId).HasMaxLength(64);
+      conversation.Property(x => x.OwnerEmail).HasMaxLength(254);
+      conversation.Property(x => x.Title).HasMaxLength(Services.Agent.ChatAgent.TitleLength);
+      conversation.HasIndex(x => x.OwnerId);
+    });
+
+    modelBuilder.Entity<ConversationMessage>(message =>
+    {
+      message.Property(x => x.Role).HasMaxLength(16);
+      message.HasIndex(x => new { x.ConversationId, x.Id });
+      message.HasOne<Conversation>()
+        .WithMany()
+        .HasForeignKey(x => x.ConversationId)
+        .OnDelete(DeleteBehavior.Cascade);
     });
 
     modelBuilder.Entity<JobLogLine>(line =>
