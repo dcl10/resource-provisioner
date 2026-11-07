@@ -1,0 +1,22 @@
+# Caddy terminates HTTPS (certificates from Let's Encrypt, renewed automatically) and routes the two hostnames.
+# APP_HOST, AUTH_HOST and ACME_EMAIL come from the host's .env through docker-compose.prod.yml.
+{
+	email {$ACME_EMAIL}
+}
+
+{$APP_HOST} {
+	encode zstd gzip
+	# Chat replies and request logs are server-sent events: pass each piece on as soon as it arrives.
+	reverse_proxy web:3000 {
+		flush_interval -1
+	}
+}
+
+{$AUTH_HOST} {
+	# The admin console and admin REST API, and the master realm (whose token endpoint would let anyone try the
+	# Keycloak admin's password), are never served publicly. Admins use an SSH tunnel instead.
+	@private path /admin /admin/* /realms/master /realms/master/*
+	respond @private "Not found" 404
+
+	reverse_proxy keycloak:8080
+}
