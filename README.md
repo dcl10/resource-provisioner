@@ -25,6 +25,21 @@ Sign-in is invite-only, through Keycloak, and per-user limits cap LLM and cloud 
 └── docs/       How everything works, one file per topic
 ```
 
+## Quick start
+
+With Docker, from the repo root:
+
+```bash
+cp .env.example .env          # then set AUTH_SECRET: openssl rand -base64 33
+docker compose up -d          # Postgres, Keycloak and MailHog; Keycloak generates the client secrets
+# copy the rp-web and rp-api client secrets from http://localhost:8080/admin into .env,
+# and add ANTHROPIC_API_KEY and DIGITALOCEAN_TOKEN
+docker compose --profile app up -d --build
+```
+
+Then create the first admin in Keycloak and sign in at http://localhost:3000. Step by step, with an end-to-end
+checklist: [docs/local-development.md](docs/local-development.md).
+
 ## Docs
 
 Start at [docs/README.md](docs/README.md). The design rules are in [docs/architecture.md](docs/architecture.md).

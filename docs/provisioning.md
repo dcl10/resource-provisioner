@@ -87,7 +87,8 @@ Each request gets `<Workspaces:Root>/<requestId>/`:
 
 State is local on purpose: one folder per request keeps every request independent, and nothing else needs to read it.
 Preparing a workspace that already has state fails the job instead of overwriting it. `workspaces/` is gitignored and
-must be on a persistent volume when deployed (#20), or the state, and with it the ability to destroy, is lost.
+must be on a persistent volume, or the state, and with it the ability to destroy, is lost: in Docker it's the
+`workspaces` volume at `/data/workspaces` ([local-development.md](local-development.md#data)).
 
 Providers are downloaded once into `<Workspaces:Root>/.plugin-cache/`, shared by every workspace.
 
@@ -119,7 +120,7 @@ writes from its own scope. An `AwaitingConfirmation` request ends straight away;
 
 | Key | Default | |
 | --- | --- | --- |
-| `Runner:TerraformPath` | `terraform` (looked up on `PATH`) | the CLI to run; the container pins a version (#20) |
+| `Runner:TerraformPath` | `terraform` (looked up on `PATH`) | the CLI to run; the API image pins a version and sets this to `/usr/local/bin/terraform` ([local-development.md](local-development.md#the-images)) |
 | `Runner:LogPollInterval` | `00:00:01` | how often the logs endpoint checks for new lines (10 ms to 1 min) |
 | `Workspaces:Root` | `workspaces` | where workspaces go, relative to the working directory |
 

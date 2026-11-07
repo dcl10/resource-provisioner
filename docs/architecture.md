@@ -83,6 +83,7 @@ use them check for them.
 | `Keycloak:AuthServerUrl` | `http://localhost:8080` | no |
 | `Keycloak:Realm` | `resource-provisioner` | no |
 | `Keycloak:Resource` | `rp-api` (the JWT audience) | no |
+| `Keycloak:RequireHttpsMetadata` | unset: required except in Development (`false` when Keycloak is reached over a private network by HTTP, as in Docker Compose) | no |
 | `Keycloak:Secret` | none (the `rp-api` client secret, used for invites) | yes |
 | `Invitations:AppUrl` | `http://localhost:3000` (where invited users land; a valid `rp-web` redirect URI) | no |
 | `Invitations:ClientId` | `rp-web` (the client the invite link belongs to) | no |

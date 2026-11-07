@@ -11,7 +11,7 @@ exist yet.
 | [catalog.md](catalog.md) | The `resource.json` manifest format, what the loader checks, variable validation, adding a resource type, the current types |
 | [agent.md](agent.md) | How a message is answered, the system prompt's intent, the four tools and their strict schemas, the conversation endpoints and events, stored history, refusals and errors, the rate limit, model and effort config |
 | [provisioning.md](provisioning.md) | The Terraform runner, applying and destroying, credentials, workspaces and state, the logs endpoint |
-| local-development.md *(planned, #20)* | Running the full stack locally, secrets, end-to-end checklist |
+| [local-development.md](local-development.md) | Running the dependencies or the whole app with Docker Compose, settings, volumes, how containers reach Keycloak, the images and Terraform pin, the end-to-end checklist |
 | deployment.md *(planned, #21)* | Hosting on a droplet, Caddy, Keycloak production mode, SMTP, admin access |
 
 When you add a doc, replace its *(planned)* entry with a link.

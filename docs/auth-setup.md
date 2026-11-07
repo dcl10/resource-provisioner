@@ -33,7 +33,9 @@ The bootstrap admin comes from `KC_BOOTSTRAP_ADMIN_USERNAME` and `KC_BOOTSTRAP_A
 `admin` / `admin`. Set them in your shell or a root `.env` file to change them. All of these passwords are local-only
 defaults; the deployed setup (#21) uses its own.
 
-The OIDC issuer is `http://localhost:8080/realms/resource-provisioner`.
+The OIDC issuer is `http://localhost:8080/realms/resource-provisioner`. Keycloak runs with
+`KC_HOSTNAME=http://localhost:8080` and `KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`, so the issuer stays the same when the
+app itself runs in Compose and reaches Keycloak at `keycloak:8080` ([local-development.md](local-development.md#how-the-containers-reach-keycloak)).
 
 ## What the realm import creates
 
@@ -164,6 +166,10 @@ The Next.js server signs users in with Auth.js v5 and its Keycloak provider, as 
   `Authorization: Bearer <access token>` and forwards to `<API_URL>/api/<path>`. It passes on only `Accept`,
   `Accept-Language`, `Content-Type` and `Last-Event-ID` (never cookies) and streams the response back, so server-sent
   events pass through.
+- **Keycloak inside Docker:** when `AUTH_KEYCLOAK_INTERNAL_ISSUER` is set, the server's own calls to Keycloak
+  (discovery, the code exchange, refresh) go to that address instead of `AUTH_KEYCLOAK_ISSUER`'s, while the browser
+  and the tokens keep the public one. See
+  [local-development.md](local-development.md#how-the-containers-reach-keycloak).
 - **Federated sign-out:** **Sign out** in the account menu clears the session cookie, then sends the browser to
   Keycloak's end-session endpoint with `id_token_hint`, `client_id` and `post_logout_redirect_uri` set to the app's
   URL. That ends the Keycloak session as well, so the next sign-in asks for a password again. The return URL has to
@@ -176,7 +182,8 @@ proxy route ([above](#how-the-web-app-signs-in)); the browser never holds them.
 
 - **Token validation:** issuer `{Keycloak:AuthServerUrl}/realms/{Keycloak:Realm}` (signing keys from its discovery
   document), audience `rp-api` (added to `rp-web` tokens by the audience mapper), lifetime with 30 seconds' clock
-  skew. HTTPS metadata is only optional in Development.
+  skew. HTTPS metadata is required unless `Keycloak:RequireHttpsMetadata` is `false` or the environment is
+  Development; the settings are read from the bound `KeycloakOptions` when JWT validation is first used.
 - **Claims:** the JWT claim names are kept (`sub`, `email`, `preferred_username`), and the realm roles in
   `realm_access.roles` are copied into standard role claims, so `RequireRole` and `IsInRole` work.
 - **Signed in by default:** the fallback policy requires an authenticated user on every endpoint that doesn't name
