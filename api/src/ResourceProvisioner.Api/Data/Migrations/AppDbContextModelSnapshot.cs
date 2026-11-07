@@ -208,6 +208,21 @@ namespace ResourceProvisioner.Api.Data.Migrations
                     b.ToTable("ProvisioningRequests");
                 });
 
+            modelBuilder.Entity("ResourceProvisioner.Api.Models.RequestDependency", b =>
+                {
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("DependsOnId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("RequestId", "DependsOnId");
+
+                    b.HasIndex("DependsOnId");
+
+                    b.ToTable("RequestDependencies");
+                });
+
             modelBuilder.Entity("ResourceProvisioner.Api.Models.RequestSensitiveOutputs", b =>
                 {
                     b.Property<Guid>("RequestId")
@@ -233,6 +248,21 @@ namespace ResourceProvisioner.Api.Data.Migrations
 
             modelBuilder.Entity("ResourceProvisioner.Api.Models.JobLogLine", b =>
                 {
+                    b.HasOne("ResourceProvisioner.Api.Models.ProvisioningRequest", null)
+                        .WithMany()
+                        .HasForeignKey("RequestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("ResourceProvisioner.Api.Models.RequestDependency", b =>
+                {
+                    b.HasOne("ResourceProvisioner.Api.Models.ProvisioningRequest", null)
+                        .WithMany()
+                        .HasForeignKey("DependsOnId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.HasOne("ResourceProvisioner.Api.Models.ProvisioningRequest", null)
                         .WithMany()
                         .HasForeignKey("RequestId")
