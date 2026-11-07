@@ -7,7 +7,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddAppOptions();
 
 // Keycloak JWTs; every endpoint requires a signed-in user unless it opts out.
-builder.Services.AddKeycloakAuth(builder.Configuration, builder.Environment);
+builder.Services.AddKeycloakAuth(builder.Environment);
 
 // Invitations, sent through the Keycloak admin API as the rp-api service account.
 builder.Services.AddInvitations(builder.Configuration);
