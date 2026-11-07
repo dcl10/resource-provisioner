@@ -6,6 +6,7 @@ using Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Models;
+using Provisioning;
 using ResourceCatalog;
 
 /// <summary>
@@ -15,11 +16,13 @@ using ResourceCatalog;
 /// <param name="db">The app database.</param>
 /// <param name="catalog">The resource catalog.</param>
 /// <param name="limits">The active-request limits.</param>
+/// <param name="jobs">The runner's queue, which a confirmed request joins.</param>
 /// <param name="time">The clock.</param>
 public class ProvisioningRequestService(
   AppDbContext db,
   ICatalogService catalog,
   IOptions<LimitsOptions> limits,
+  IJobDispatcher jobs,
   TimeProvider time) : IProvisioningRequestService
 {
   /// <summary>The catalog type a droplet reference must point at.</summary>
@@ -120,6 +123,8 @@ public class ProvisioningRequestService(
       ConfirmLock.Release();
     }
 
+    // Saved first, so if the API stops before the runner gets to it, the runner re-queues it at startup.
+    await jobs.EnqueueAsync(request.Id, cancellationToken);
     return ToResponse(request);
   }
 
