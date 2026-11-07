@@ -170,7 +170,7 @@ public class ProvisioningRequestService(
     await ConfirmLock.WaitAsync(cancellationToken);
     try
     {
-      await EnforceLimits(user.UserId, ordered.Count, cancellationToken);
+      await EnforceLimits(user.UserId, ordered.Count(r => catalog.Find(r.Type)?.Free != true), cancellationToken);
       var now = time.GetUtcNow();
       foreach (var request in ordered)
       {
@@ -395,9 +395,20 @@ public class ProvisioningRequestService(
     return ordered;
   }
 
+  /// <summary>
+  /// Checks the active-request limits for confirming <paramref name="adding"/> more requests. Free types (projects,
+  /// firewalls) count neither among the active requests nor among those being confirmed.
+  /// </summary>
   private async Task EnforceLimits(string ownerId, int adding, CancellationToken cancellationToken)
   {
-    var active = db.ProvisioningRequests.Where(x => RequestStateMachine.ActiveStatuses.Contains(x.Status));
+    if (adding == 0)
+    {
+      return;
+    }
+
+    var free = catalog.Types.Where(t => t.Free).Select(t => t.Id).ToList();
+    var active = db.ProvisioningRequests.Where(x =>
+      RequestStateMachine.ActiveStatuses.Contains(x.Status) && !free.Contains(x.Type));
 
     var mine = await active.CountAsync(x => x.OwnerId == ownerId, cancellationToken);
     if (mine + adding > _limits.MaxActiveRequestsPerUser)
