@@ -144,6 +144,25 @@ public class ProvisioningRequestService(
   }
 
   /// <inheritdoc />
+  public async Task<JsonObject> GetSensitiveOutputsAsync(
+    Guid id,
+    RequestUser user,
+    CancellationToken cancellationToken = default)
+  {
+    var request = await FindVisible(id, user, cancellationToken);
+    if (request.OwnerId != user.UserId)
+    {
+      throw new RequestForbiddenException("Only the request's owner can see its secret outputs.");
+    }
+
+    var values = await db.RequestSensitiveOutputs.AsNoTracking()
+      .Where(x => x.RequestId == request.Id)
+      .Select(x => x.Values)
+      .SingleOrDefaultAsync(cancellationToken);
+    return values is null ? [] : JsonNode.Parse(values)?.AsObject() ?? [];
+  }
+
+  /// <inheritdoc />
   public async Task<ProvisioningRequestResponse> DestroyAsync(
     Guid id,
     RequestUser user,

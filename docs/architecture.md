@@ -176,8 +176,10 @@ runner's job: see [provisioning.md](provisioning.md).
 
 **Outputs.** Non-sensitive outputs go in `ProvisioningRequests.Outputs`. Sensitive ones (`"sensitive": true` in the
 manifest: passwords, connection URIs) go in their own table, `RequestSensitiveOutputs`, keyed by request ID. The list
-and detail endpoints never load that table, and sensitive variables are left out of their `variables` too. An explicit,
-owner-only reveal is #19's job; it reads `RequestSensitiveOutputs` directly.
+and detail endpoints never load that table, and sensitive variables are left out of their `variables` too. The only
+way to read them is the owner's explicit reveal, `GET /api/requests/{id}/sensitive-outputs`, which answers with the
+values by name (`{}` if there are none) and `Cache-Control: no-store`. The request page calls it only when the owner
+clicks **Reveal secrets**.
 
 **Runner variables.** `RunnerVariables.For(request)` gives the runner the variables it forces on every module:
 `rp_name_suffix`, the request ID's first 8 hex digits, and `rp_tags`, which are `resource-provisioner`,
@@ -191,6 +193,7 @@ owner-only reveal is #19's job; it reads `RequestSensitiveOutputs` directly.
 | `GET /api/requests/{id}`, `GET .../logs` | 200 | 404 | 200 |
 | `POST .../confirm`, `POST .../cancel` | allowed | 404 | 403 |
 | `POST .../destroy` | allowed | 404 | allowed |
+| `GET .../sensitive-outputs` | allowed | 404 | 403 |
 
 Admins can see everything, and their one extra power over other users' cloud resources is taking them down: an admin
 can destroy a resource someone left running, but can't create, confirm or reference anything in their name. A request

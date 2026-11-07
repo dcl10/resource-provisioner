@@ -39,13 +39,16 @@ web/
 │   │   │   ├── layout.tsx      # conversation list beside the chat
 │   │   │   ├── page.tsx        # start page: "New conversation"
 │   │   │   └── [id]/page.tsx   # one conversation
-│   │   ├── requests/page.tsx   # requests list (#19)
+│   │   ├── requests/
+│   │   │   ├── page.tsx        # requests list
+│   │   │   └── [id]/page.tsx   # one request: settings, outputs, secrets, live log, Destroy
 │   │   └── admin/users/page.tsx # admins only: invite colleagues, invitation statuses
 │   └── api/
 │       ├── auth/[...nextauth]/ # Auth.js endpoints; /session is cut down so tokens never reach the browser
 │       └── proxy/[...path]/    # forwards to the .NET API with the access token
 ├── components/
 │   ├── chat/                   # the chat: thread, composer, Markdown, proposal card, conversation list, query hooks
+│   ├── requests/               # requests table, request page, status badge, destroy dialog, log, secrets, query hooks
 │   ├── admin/                  # AdminOnly gate, the Users page (invite form, invitations table, query hooks)
 │   ├── providers.tsx           # next-themes, TanStack Query, tooltips, sonner Toaster
 │   ├── app-shell.tsx           # header and page container around every signed-in page
@@ -58,10 +61,12 @@ web/
 └── lib/
     ├── auth/                   # Auth.js config, Keycloak token handling, session helpers, server actions
     ├── api-proxy.ts            # URL and header mapping for the API proxy
-    ├── api.ts                  # apiFetch, ApiError and readApiError: calling the API through the proxy
+    ├── api.ts                  # apiFetch, ApiError, readApiError, retryUnlessClientError
+    ├── catalog.ts              # resource types (for output descriptions and which outputs are secret)
     ├── chat.ts                 # conversation types and calls; sendMessage streams a reply
-    ├── requests.ts             # request types, status labels, get / confirm / cancel
+    ├── requests.ts             # request types, status helpers, calls; followLogs streams a request's log
     ├── sse.ts                  # SseParser: server-sent events from a fetch stream
+    ├── test-requests.ts        # test helpers: a sample request, a JSON response
     ├── test-sse.ts             # test helpers: a streamed event-stream Response
     ├── invitations.ts          # invitations API calls, types, invite form schema
     └── utils.ts                # shadcn's cn() helper
@@ -109,6 +114,26 @@ request's current status (`GET /api/requests/<id>`), so an old proposal shows wh
 confirmation, **Confirm** and **Cancel** call `POST /api/requests/<id>/confirm` or `/cancel`. Confirming shows a toast
 with a **View request** action and swaps the buttons for a link to the request page. Errors show on the card and in a
 toast; over an active-request limit, the card explains it under "You're at your limit" with the API's advice.
+
+## The requests pages
+
+`/requests` lists the user's requests (everyone's for an admin, with an **Owner** column) in a TanStack Table: type
+(linking to the request), name, status and when it was created. `/requests/<id>` shows one request: its status, the
+settings it was created with, its outputs (described from the catalog), the Terraform log, and **Destroy**.
+
+- **Status** shows as a `StatusBadge`, with a spinner while a job is queued or running. The list and the request
+  re-read themselves every 3 seconds while a job is in progress (`useRequests` / `useRequest`), and the chat's proposal
+  cards share the same queries.
+- **The log** streams from `GET /api/requests/<id>/logs` ([the events](provisioning.md#get-apirequestsidlogs)) through
+  `followLogs`. Each `status` event refreshes the request. When a job starts (after Destroy, say), the stream reconnects
+  with `Last-Event-ID` and carries on below the earlier lines.
+- **Secret outputs** (passwords, keys, connection URIs) are shown to the owner only, masked until they click **Reveal
+  secrets**, which is the only time `GET /api/requests/<id>/sensitive-outputs` is called. **Hide secrets** drops them
+  from the query cache, and the response is never cached by the browser.
+- **Destroy** is offered to the owner or an admin once the request is Provisioned or Failed. It asks for confirmation
+  in an alert dialog, then the badge and the log follow the destroy.
+- A request or conversation the user can't see (404) isn't retried: `retryUnlessClientError` retries only server and
+  network errors.
 
 ## Stack
 

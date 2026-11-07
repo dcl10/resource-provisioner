@@ -3,6 +3,7 @@ namespace ResourceProvisioner.Api.Controllers;
 using System.Net.ServerSentEvents;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Auth;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
@@ -64,6 +65,18 @@ public class RequestsController(
   [HttpPost("{id:guid}/cancel")]
   public Task<ActionResult<ProvisioningRequestResponse>> Cancel(Guid id, CancellationToken cancellationToken) =>
     Handle(() => requests.CancelAsync(id, Caller, cancellationToken));
+
+  /// <summary>
+  /// Reveals the request's sensitive outputs (passwords, connection URIs, keys) to its owner: an explicit action in the
+  /// UI, never part of the list or detail responses. Owner only; 404 for another user, 403 for an admin. Not cached.
+  /// </summary>
+  /// <param name="id">Request ID.</param>
+  /// <param name="cancellationToken">Cancels the request.</param>
+  /// <returns>The sensitive outputs by name; <c>{}</c> if there are none.</returns>
+  [HttpGet("{id:guid}/sensitive-outputs")]
+  [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+  public Task<ActionResult<JsonObject>> GetSensitiveOutputs(Guid id, CancellationToken cancellationToken) =>
+    Handle(() => requests.GetSensitiveOutputsAsync(id, Caller, cancellationToken));
 
   /// <summary>
   /// Tears down what the request created: queues <c>terraform destroy</c> for the runner. Allowed from
