@@ -27,10 +27,15 @@ import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { ApiError } from "@/lib/api";
 import type { SessionUser } from "@/lib/auth/types";
 import {
+  blockingDependents,
   canDestroy,
   formatValue,
   isInProgress,
+  linkLabel,
+  type RequestLink,
   requestName,
+  requestPath,
+  waitingFor,
 } from "@/lib/requests";
 
 const dateFormat = new Intl.DateTimeFormat(undefined, {
@@ -85,6 +90,8 @@ export function RequestDetail({
     catalog.data?.find((type) => type.id === data.type)?.outputs ?? [];
   const secretSpecs = outputSpecs.filter((o) => o.sensitive);
   const outputs = Object.entries(data.outputs ?? {});
+  const waiting = waitingFor(data);
+  const blocking = blockingDependents(data);
 
   return (
     <div className="flex flex-col gap-6">
@@ -104,7 +111,9 @@ export function RequestDetail({
             ) : null}
           </h1>
           <StatusBadge status={data.status} />
-          {canDestroy(data.status) && (isOwner || user.isAdmin) ? (
+          {canDestroy(data.status) &&
+          (isOwner || user.isAdmin) &&
+          blocking.length === 0 ? (
             <div className="ml-auto">
               <DestroyButton request={data} />
             </div>
@@ -117,7 +126,36 @@ export function RequestDetail({
             : ""}
           {isOwner ? "" : ` · Owner: ${data.ownerEmail ?? data.ownerId}`}
         </p>
+        {waiting.length > 0 ? (
+          <p className="text-sm" aria-live="polite">
+            Waiting for <Links links={waiting} /> to be provisioned first.
+          </p>
+        ) : null}
+        {canDestroy(data.status) &&
+        (isOwner || user.isAdmin) &&
+        blocking.length > 0 ? (
+          <p className="text-sm text-muted-foreground">
+            To destroy this, first destroy <Links links={blocking} />, which{" "}
+            {blocking.length === 1 ? "depends" : "depend"} on it.
+          </p>
+        ) : null}
       </div>
+
+      {data.dependsOn.length > 0 || data.dependents.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Related requests</CardTitle>
+            <CardDescription>
+              What this needs is provisioned before it; what needs it is
+              destroyed before it.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            <RelatedList title="Depends on" links={data.dependsOn} />
+            <RelatedList title="Needed by" links={data.dependents} />
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>
@@ -172,6 +210,48 @@ export function RequestDetail({
           />
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+function Links({ links }: { links: RequestLink[] }) {
+  return links.map((link, i) => (
+    <span key={link.id}>
+      {i > 0 ? ", " : null}
+      <Link
+        href={requestPath(link.id)}
+        className="underline underline-offset-4"
+      >
+        {linkLabel(link)}
+      </Link>
+    </span>
+  ));
+}
+
+function RelatedList({
+  title,
+  links,
+}: {
+  title: string;
+  links: RequestLink[];
+}) {
+  if (links.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1">
+      <p className="text-sm font-medium">{title}</p>
+      <ul className="flex flex-col gap-1">
+        {links.map((link) => (
+          <li key={link.id} className="flex items-center gap-2 text-sm">
+            <Link
+              href={requestPath(link.id)}
+              className="underline underline-offset-4"
+            >
+              {linkLabel(link)}
+            </Link>
+            <StatusBadge status={link.status} />
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
