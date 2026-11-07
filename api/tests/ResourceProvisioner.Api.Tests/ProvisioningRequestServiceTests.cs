@@ -73,7 +73,7 @@ public class ProvisioningRequestServiceTests(ApiFactory factory) : IClassFixture
   [Fact]
   public async Task ProposeAsync_Accepts_WhenDropletReferenceIsOwnSucceededDroplet()
   {
-    var droplet = await factory.SeedDropletAsync(_owner.UserId);
+    var droplet = await factory.SeedServerAsync(_owner.UserId);
 
     var result = await Propose(_owner, DatabaseType, DatabaseReferencing(droplet.Id));
 
@@ -83,11 +83,11 @@ public class ProvisioningRequestServiceTests(ApiFactory factory) : IClassFixture
   [Fact]
   public async Task ProposeAsync_RejectsReference_WhenDropletIsAnotherUsers()
   {
-    var droplet = await factory.SeedDropletAsync("someone-else");
+    var droplet = await factory.SeedServerAsync("someone-else");
 
     var result = await Propose(_owner, DatabaseType, DatabaseReferencing(droplet.Id));
 
-    Assert.Equal([$"'{droplet.Id}' isn't the request ID of one of your droplets."],
+    Assert.Equal([$"'{droplet.Id}' isn't the request ID of one of your Test server requests."],
       result.Errors["allowed_droplet_request_ids[0]"]);
   }
 
@@ -95,7 +95,7 @@ public class ProvisioningRequestServiceTests(ApiFactory factory) : IClassFixture
   public async Task ProposeAsync_RejectsReference_WhenAdminNamesAnotherUsersDroplet()
   {
     var admin = new RequestUser($"admin-{Guid.NewGuid():N}", "admin@example.com", IsAdmin: true);
-    var droplet = await factory.SeedDropletAsync("someone-else");
+    var droplet = await factory.SeedServerAsync("someone-else");
 
     var result = await Propose(admin, DatabaseType, DatabaseReferencing(droplet.Id));
 
@@ -106,35 +106,64 @@ public class ProvisioningRequestServiceTests(ApiFactory factory) : IClassFixture
   [InlineData(RequestStatus.AwaitingConfirmation)]
   [InlineData(RequestStatus.Queued)]
   [InlineData(RequestStatus.Applying)]
+  [InlineData(RequestStatus.Succeeded)]
+  public async Task ProposeAsync_AcceptsAndRecordsReference_WhenOwnRequestIsPendingOrProvisioned(RequestStatus status)
+  {
+    var server = await factory.SeedServerAsync(_owner.UserId, status);
+
+    var result = await Propose(_owner, DatabaseType, DatabaseReferencing(server.Id));
+
+    Assert.True(result.IsValid);
+    var link = Assert.Single(result.Request!.DependsOn);
+    Assert.Equal(
+      (server.Id, "test-server", "Test server", "web-1", status),
+      (link.Id, link.Type, link.DisplayName, link.Name, link.Status));
+    using var scope = factory.Services.CreateScope();
+    var dependency = await scope.ServiceProvider.GetRequiredService<AppDbContext>().RequestDependencies
+      .SingleAsync(d => d.RequestId == result.Request.Id);
+    Assert.Equal(server.Id, dependency.DependsOnId);
+  }
+
+  [Theory]
   [InlineData(RequestStatus.Failed)]
   [InlineData(RequestStatus.Destroying)]
   [InlineData(RequestStatus.Destroyed)]
   [InlineData(RequestStatus.Cancelled)]
-  public async Task ProposeAsync_RejectsReference_WhenOwnDropletHasNotSucceeded(RequestStatus status)
+  public async Task ProposeAsync_RejectsReference_WhenOwnRequestCantBeBuiltOn(RequestStatus status)
   {
-    var droplet = await factory.SeedDropletAsync(_owner.UserId, status);
+    var server = await factory.SeedServerAsync(_owner.UserId, status);
 
-    var result = await Propose(_owner, DatabaseType, DatabaseReferencing(droplet.Id));
+    var result = await Propose(_owner, DatabaseType, DatabaseReferencing(server.Id));
 
     Assert.Equal(
-      [$"Droplet request {droplet.Id} is {status}; only provisioned (Succeeded) droplets can be referenced."],
+      [$"Test server request {server.Id} is {status}; only pending or provisioned requests can be referenced."],
       result.Errors["allowed_droplet_request_ids[0]"]);
   }
 
   [Fact]
-  public async Task ProposeAsync_RejectsReference_WhenRequestIsNotADroplet()
+  public async Task ProposeAsync_RejectsReference_WhenRequestIsOfAnotherType()
   {
-    var server = await factory.SeedRequestAsync(_owner.UserId, RequestStatus.Succeeded);
+    var firewall = await factory.SeedRequestAsync(_owner.UserId, RequestStatus.Succeeded, type: "test-firewall");
 
-    var result = await Propose(_owner, DatabaseType, DatabaseReferencing(server.Id));
+    var result = await Propose(_owner, DatabaseType, DatabaseReferencing(firewall.Id));
 
     Assert.Contains("allowed_droplet_request_ids[0]", result.Errors.Keys);
   }
 
   [Fact]
+  public async Task ProposeAsync_RecordsOneDependency_WhenTheSameRequestIsReferencedTwice()
+  {
+    var server = await factory.SeedServerAsync(_owner.UserId);
+
+    var result = await Propose(_owner, DatabaseType, DatabaseReferencing(server.Id, server.Id));
+
+    Assert.Single(result.Request!.DependsOn);
+  }
+
+  [Fact]
   public async Task ProposeAsync_ReportsEachBadReference_ByIndex()
   {
-    var mine = await factory.SeedDropletAsync(_owner.UserId);
+    var mine = await factory.SeedServerAsync(_owner.UserId);
 
     var result = await Propose(_owner, DatabaseType, DatabaseReferencing(mine.Id, Guid.NewGuid()));
 
