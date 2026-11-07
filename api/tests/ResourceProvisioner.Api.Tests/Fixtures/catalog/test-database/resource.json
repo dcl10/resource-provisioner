@@ -12,6 +12,7 @@
     },
     {
       "name": "allowed_droplet_request_ids",
+      "references": "test-server",
       "type": "array",
       "description": "Request IDs of the user's own droplets that may connect.",
       "maxItems": 3,
