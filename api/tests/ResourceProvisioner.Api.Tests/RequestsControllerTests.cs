@@ -345,7 +345,7 @@ public class RequestsControllerTests(HighLimitApiFactory factory) : IClassFixtur
   [Fact]
   public async Task Confirm_ReturnsUnprocessable_WhenReferencedDropletIsNoLongerSucceeded()
   {
-    var droplet = await factory.SeedDropletAsync(_userId);
+    var droplet = await factory.SeedServerAsync(_userId);
     var request = await factory.SeedRequestAsync(
       _userId,
       RequestStatus.AwaitingConfirmation,
@@ -364,7 +364,7 @@ public class RequestsControllerTests(HighLimitApiFactory factory) : IClassFixtur
   [Fact]
   public async Task Confirm_ReturnsUnprocessable_WhenReferencedDropletIsAnotherUsers()
   {
-    var droplet = await factory.SeedDropletAsync("someone-else");
+    var droplet = await factory.SeedServerAsync("someone-else");
     var request = await factory.SeedRequestAsync(
       _userId,
       RequestStatus.AwaitingConfirmation,
@@ -379,7 +379,7 @@ public class RequestsControllerTests(HighLimitApiFactory factory) : IClassFixtur
   [Fact]
   public async Task Confirm_QueuesRequest_WhenReferencedDropletIsOwnAndSucceeded()
   {
-    var droplet = await factory.SeedDropletAsync(_userId);
+    var droplet = await factory.SeedServerAsync(_userId);
     var request = await factory.SeedRequestAsync(
       _userId,
       RequestStatus.AwaitingConfirmation,

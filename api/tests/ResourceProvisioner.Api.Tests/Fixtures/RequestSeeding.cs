@@ -3,7 +3,6 @@ namespace ResourceProvisioner.Api.Tests.Fixtures;
 using Data;
 using Microsoft.Extensions.DependencyInjection;
 using Models;
-using Services.Requests;
 
 /// <summary>Puts provisioning requests straight into the test database, in any status.</summary>
 public static class RequestSeeding
@@ -55,16 +54,32 @@ public static class RequestSeeding
     return request;
   }
 
-  /// <summary>Saves a provisioned (<c>Succeeded</c>) droplet request; its type needn't be in the fixture catalog.</summary>
+  /// <summary>
+  /// Saves a <c>test-server</c> request, the type the fixture <c>test-database</c> references (as postgres references
+  /// droplets); <c>Succeeded</c> by default.
+  /// </summary>
   /// <param name="factory">The test host.</param>
   /// <param name="ownerId">The owner's <c>sub</c>.</param>
   /// <param name="status">Its status; <c>Succeeded</c> by default.</param>
   /// <returns>The saved request.</returns>
-  public static Task<ProvisioningRequest> SeedDropletAsync(
+  public static Task<ProvisioningRequest> SeedServerAsync(
     this ApiFactory factory,
     string ownerId,
     RequestStatus status = RequestStatus.Succeeded) =>
-    factory.SeedRequestAsync(ownerId, status, ProvisioningRequestService.DropletType, """{"name":"web"}""");
+    factory.SeedRequestAsync(ownerId, status);
+
+  /// <summary>Records that one request depends on another, as proposing a request with a reference does.</summary>
+  /// <param name="factory">The test host.</param>
+  /// <param name="requestId">The dependent request.</param>
+  /// <param name="dependsOnId">The request it depends on.</param>
+  /// <returns>A task that completes once it's saved.</returns>
+  public static async Task AddDependencyAsync(this ApiFactory factory, Guid requestId, Guid dependsOnId)
+  {
+    using var scope = factory.Services.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    db.RequestDependencies.Add(new RequestDependency { RequestId = requestId, DependsOnId = dependsOnId });
+    await db.SaveChangesAsync();
+  }
 
   /// <summary>Reads a request back from the database.</summary>
   /// <param name="factory">The test host.</param>
