@@ -186,6 +186,113 @@ public class TerraformJobProcessorTests : IClassFixture<ApiFactory>
       (await Lines(request.Id))[^1].Text);
   }
 
+  [Fact]
+  public async Task RunAsync_DestroysAndClearsOutputs_WhenDestroying()
+  {
+    var request = await SeedDestroying(withState: true);
+
+    await Run(request.Id);
+
+    var stored = await Find(request.Id);
+    Assert.Equal(RequestStatus.Destroyed, stored.Status);
+    Assert.Null(stored.Outputs);
+    Assert.Null(stored.SensitiveOutputs);
+    var workspace = Path.Combine(_factory.WorkspacesRoot, request.Id.ToString());
+    Assert.Equal(
+      ["init -input=false -no-color", "destroy -auto-approve -input=false -no-color"],
+      _factory.Terraform.Invocations.Select(i => string.Join(' ', i.Arguments)));
+    Assert.All(_factory.Terraform.Invocations, i =>
+    {
+      Assert.Equal(workspace, i.WorkingDirectory);
+      Assert.Equal("test-do-token", i.Environment["DIGITALOCEAN_TOKEN"]);
+    });
+    Assert.Equal("Destroyed.", (await Lines(request.Id))[^1].Text);
+  }
+
+  [Fact]
+  public async Task RunAsync_DestroysWithoutRunningTerraform_WhenThereIsNoState()
+  {
+    var request = await SeedDestroying(withState: false);
+
+    await Run(request.Id);
+
+    Assert.Equal(RequestStatus.Destroyed, (await Find(request.Id)).Status);
+    Assert.Empty(_factory.Terraform.Invocations);
+    Assert.StartsWith("Nothing to destroy", (await Lines(request.Id))[^1].Text, StringComparison.Ordinal);
+  }
+
+  [Fact]
+  public async Task RunAsync_FailsAndKeepsOutputs_WhenDestroyFails()
+  {
+    var request = await SeedDestroying(withState: true);
+    _factory.Terraform.Script("destroy", 1, (LogSource.Stderr, "Error: droplet is locked"));
+
+    await Run(request.Id);
+
+    var stored = await Find(request.Id);
+    Assert.Equal(RequestStatus.Failed, stored.Status);
+    Assert.NotNull(stored.Outputs);
+    Assert.NotNull(stored.SensitiveOutputs);
+    var lines = await Lines(request.Id);
+    Assert.Contains(lines, l => l.Text == "Error: droplet is locked");
+    Assert.Equal("Failed: terraform destroy exited with code 1.", lines[^1].Text);
+  }
+
+  [Fact]
+  public async Task RunAsync_Destroys_WhenTypeIsNoLongerInCatalog()
+  {
+    var request = await SeedDestroying(withState: true, type: "retired-type");
+
+    await Run(request.Id);
+
+    Assert.Equal(RequestStatus.Destroyed, (await Find(request.Id)).Status);
+    Assert.Contains(_factory.Terraform.Invocations, i => i.Arguments[0] == "destroy");
+  }
+
+  [Fact]
+  public async Task RunAsync_DestroysWhatItApplied()
+  {
+    var request = await _factory.SeedRequestAsync(OwnerId, RequestStatus.Queued);
+    await Run(request.Id);
+
+    // The fake doesn't write state; a real apply would.
+    await File.WriteAllTextAsync(
+      Path.Combine(_factory.WorkspacesRoot, request.Id.ToString(), TerraformWorkspace.StateFile),
+      "{}");
+    await SetStatus(request.Id, RequestStatus.Destroying);
+    await Run(request.Id);
+
+    Assert.Equal(RequestStatus.Destroyed, (await Find(request.Id)).Status);
+    Assert.Single(
+      _factory.Terraform.Invocations.Select(i => i.WorkingDirectory).Distinct());
+  }
+
+  private async Task<ProvisioningRequest> SeedDestroying(bool withState, string type = "test-server")
+  {
+    var request = await _factory.SeedRequestAsync(
+      OwnerId,
+      RequestStatus.Destroying,
+      type,
+      outputs: """{"id":"123"}""",
+      sensitiveOutputs: """{"root_password":"output-secret"}""");
+    if (withState)
+    {
+      var workspace = Path.Combine(_factory.WorkspacesRoot, request.Id.ToString());
+      Directory.CreateDirectory(workspace);
+      await File.WriteAllTextAsync(Path.Combine(workspace, TerraformWorkspace.StateFile), "{}");
+    }
+
+    return request;
+  }
+
+  private async Task SetStatus(Guid id, RequestStatus status)
+  {
+    using var scope = _factory.Services.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    (await db.ProvisioningRequests.SingleAsync(x => x.Id == id)).Status = status;
+    await db.SaveChangesAsync();
+  }
+
   private async Task Run(Guid id)
   {
     using var scope = _factory.Services.CreateScope();

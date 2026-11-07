@@ -11,9 +11,10 @@ using ResourceCatalog;
 using Terraform;
 
 /// <summary>
-/// <see cref="ITerraformJobProcessor"/>: prepares the request's workspace, then runs <c>terraform init</c>,
-/// <c>plan -out=plan.tfplan</c>, <c>apply plan.tfplan</c> and <c>output -json</c>, saving every line of output as a
-/// <see cref="JobLogLine"/> except <c>output</c>'s, which holds secrets.
+/// <see cref="ITerraformJobProcessor"/>. An apply prepares the request's workspace, then runs <c>terraform init</c>,
+/// <c>plan -out=plan.tfplan</c>, <c>apply plan.tfplan</c> and <c>output -json</c>; a destroy runs <c>init</c> and
+/// <c>destroy -auto-approve</c> in the same workspace. Every line of output is saved as a <see cref="JobLogLine"/>
+/// except <c>output</c>'s, which holds secrets.
 /// </summary>
 /// <param name="db">The app database.</param>
 /// <param name="catalog">The resource catalog.</param>
@@ -37,62 +38,44 @@ public partial class TerraformJobProcessor(
   public async Task RunAsync(Guid requestId, CancellationToken cancellationToken)
   {
     var request = await db.ProvisioningRequests.SingleOrDefaultAsync(x => x.Id == requestId, cancellationToken);
-    if (request?.Status != RequestStatus.Queued)
+    switch (request?.Status)
     {
-      LogNotQueued(logger, requestId, request?.Status);
-      return;
-    }
+      case RequestStatus.Queued:
+        try
+        {
+          RequestStateMachine.Move(request, RequestStatus.Applying, time.GetUtcNow());
+          await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+          LogChanged(logger, requestId);
+          return;
+        }
 
-    try
-    {
-      RequestStateMachine.Move(request, RequestStatus.Applying, time.GetUtcNow());
-      await db.SaveChangesAsync(cancellationToken);
-    }
-    catch (DbUpdateConcurrencyException)
-    {
-      LogChanged(logger, requestId);
-      return;
-    }
+        await Guarded(request, () => ApplyAsync(request, cancellationToken), cancellationToken);
+        break;
 
-    await ApplyAsync(request, cancellationToken);
+      // Destroy moved it to Destroying before queueing it, so there's no move to make here.
+      case RequestStatus.Destroying:
+        await Guarded(request, () => DestroyAsync(request, cancellationToken), cancellationToken);
+        break;
+
+      default:
+        LogNothingToDo(logger, requestId, request?.Status);
+        break;
+    }
   }
 
-  private async Task ApplyAsync(ProvisioningRequest request, CancellationToken cancellationToken)
+  /// <summary>Runs a job's work, moving the request to <c>Failed</c> with a log line if it throws.</summary>
+  private async Task Guarded(ProvisioningRequest request, Func<Task> work, CancellationToken cancellationToken)
   {
     try
     {
-      var manifest = catalog.Find(request.Type) ??
-                     throw new JobFailedException($"Resource type '{request.Type}' is no longer in the catalog.");
-      var environment = Environment();
-      var workspace = TerraformWorkspace.Prepare(
-        workspaces.Value.Root,
-        catalog.GetModuleDirectory(request.Type),
-        request);
-
-      await Step(request.Id, workspace, environment, ["init", "-input=false", "-no-color"], cancellationToken);
-      await Step(request.Id, workspace, environment,
-        ["plan", "-input=false", "-no-color", $"-out={TerraformWorkspace.PlanFile}"], cancellationToken);
-      await Step(request.Id, workspace, environment,
-        ["apply", "-input=false", "-no-color", TerraformWorkspace.PlanFile], cancellationToken);
-
-      var (plain, sensitive) = TerraformOutputs.Split(
-        await ReadOutputs(request.Id, workspace, environment, cancellationToken),
-        manifest);
-
-      request.Outputs = plain.ToJsonString();
-      if (sensitive.Count > 0)
-      {
-        db.RequestSensitiveOutputs.Add(
-          new RequestSensitiveOutputs { RequestId = request.Id, Values = sensitive.ToJsonString() });
-      }
-
-      await AppendLog(request.Id, LogSource.System, "Provisioned.", CancellationToken.None);
-      RequestStateMachine.Move(request, RequestStatus.Succeeded, time.GetUtcNow());
-      await db.SaveChangesAsync(CancellationToken.None);
+      await work();
     }
     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
     {
-      // Shutting down. The request stays Applying, and the runner marks it Failed when it next starts.
+      // Shutting down. The request stays Applying or Destroying, and the runner deals with it when it next starts.
       throw;
     }
     catch (JobFailedException ex)
@@ -106,6 +89,68 @@ public partial class TerraformJobProcessor(
     }
   }
 
+  private async Task ApplyAsync(ProvisioningRequest request, CancellationToken cancellationToken)
+  {
+    var manifest = catalog.Find(request.Type) ??
+                   throw new JobFailedException($"Resource type '{request.Type}' is no longer in the catalog.");
+    var environment = Environment();
+    var workspace = TerraformWorkspace.Prepare(
+      workspaces.Value.Root,
+      catalog.GetModuleDirectory(request.Type),
+      request);
+
+    await Step(request.Id, workspace, environment, ["init", "-input=false", "-no-color"], cancellationToken);
+    await Step(request.Id, workspace, environment,
+      ["plan", "-input=false", "-no-color", $"-out={TerraformWorkspace.PlanFile}"], cancellationToken);
+    await Step(request.Id, workspace, environment,
+      ["apply", "-input=false", "-no-color", TerraformWorkspace.PlanFile], cancellationToken);
+
+    var (plain, sensitive) = TerraformOutputs.Split(
+      await ReadOutputs(request.Id, workspace, environment, cancellationToken),
+      manifest);
+
+    request.Outputs = plain.ToJsonString();
+    if (sensitive.Count > 0)
+    {
+      db.RequestSensitiveOutputs.Add(
+        new RequestSensitiveOutputs { RequestId = request.Id, Values = sensitive.ToJsonString() });
+    }
+
+    await AppendLog(request.Id, LogSource.System, "Provisioned.", CancellationToken.None);
+    RequestStateMachine.Move(request, RequestStatus.Succeeded, time.GetUtcNow());
+    await db.SaveChangesAsync(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// Runs <c>terraform destroy</c> in the request's existing workspace. It needs neither the catalog (the workspace
+  /// has its own copy of the module and its tfvars) nor a fresh plan. With no state file, Terraform never created
+  /// anything, so there's nothing to run.
+  /// </summary>
+  private async Task DestroyAsync(ProvisioningRequest request, CancellationToken cancellationToken)
+  {
+    var workspace = TerraformWorkspace.PathFor(workspaces.Value.Root, request.Id);
+    if (File.Exists(Path.Combine(workspace, TerraformWorkspace.StateFile)))
+    {
+      var environment = Environment();
+      await Step(request.Id, workspace, environment, ["init", "-input=false", "-no-color"], cancellationToken);
+      await Step(request.Id, workspace, environment,
+        ["destroy", "-auto-approve", "-input=false", "-no-color"], cancellationToken);
+      await AppendLog(request.Id, LogSource.System, "Destroyed.", CancellationToken.None);
+    }
+    else
+    {
+      await AppendLog(request.Id, LogSource.System,
+        "Nothing to destroy: Terraform has no state for this request, so it never created anything.",
+        CancellationToken.None);
+    }
+
+    // The resource is gone, and so are the credentials its outputs held.
+    request.Outputs = null;
+    await db.RequestSensitiveOutputs.Where(x => x.RequestId == request.Id).ExecuteDeleteAsync(CancellationToken.None);
+    RequestStateMachine.Move(request, RequestStatus.Destroyed, time.GetUtcNow());
+    await db.SaveChangesAsync(CancellationToken.None);
+  }
+
   /// <summary>
   /// The provider credentials and Terraform's automation settings. Credentials go only here, never in tfvars or the
   /// log.
@@ -115,7 +160,7 @@ public partial class TerraformJobProcessor(
     var token = digitalOcean.Value.Token;
     if (string.IsNullOrWhiteSpace(token))
     {
-      throw new JobFailedException("The API has no DigitalOcean token (DigitalOcean:Token), so nothing can be created.");
+      throw new JobFailedException("The API has no DigitalOcean token (DigitalOcean:Token), so Terraform can't run.");
     }
 
     var cache = Path.Combine(Path.GetFullPath(workspaces.Value.Root), ".plugin-cache");
@@ -210,7 +255,7 @@ public partial class TerraformJobProcessor(
   }
 
   [LoggerMessage(Level = LogLevel.Information, Message = "Skipping the job for request {RequestId}: it's {Status}")]
-  private static partial void LogNotQueued(ILogger logger, Guid requestId, RequestStatus? status);
+  private static partial void LogNothingToDo(ILogger logger, Guid requestId, RequestStatus? status);
 
   [LoggerMessage(Level = LogLevel.Information,
     Message = "Skipping the job for request {RequestId}: it changed before the runner got to it")]

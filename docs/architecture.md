@@ -122,8 +122,8 @@ When deployed they come from environment variables (`Anthropic__ApiKey` and so o
 3. **The agent has four tools:** `list_resource_types`, `get_resource_spec`, `list_my_resources` and
    `propose_request`.
 4. **Every endpoint requires sign-in.** Sign-in is invite-only through Keycloak. Users see only their own
-   conversations and requests; `rp-admin` sees everything and manages invitations, but confirms, cancels and
-   references only their own requests.
+   conversations and requests; `rp-admin` sees everything, manages invitations and can destroy anyone's request
+   (to clean up spend), but confirms, cancels and references only their own.
 5. **Spend is capped:** a per-user rate limit on chat messages, a per-user cap on active resources, a global cap,
    cheap sizes allow-listed in the manifests, and a runner that applies one job at a time. The default model is
    `claude-sonnet-5-5` at low effort.
@@ -153,7 +153,7 @@ tag and the manifests' droplet-reference patterns use.
 | `Applying` | `terraform apply` is running | the runner ([provisioning.md](provisioning.md)) |
 | `Succeeded` | The resource exists; outputs are stored | the runner |
 | `Failed` | Apply or destroy failed; resources may be left behind | the runner |
-| `Destroying` | `terraform destroy` is running | destroy (#16) |
+| `Destroying` | Waiting for, or running, `terraform destroy` | the owner's or an admin's destroy (`POST /api/requests/{id}/destroy`) |
 | `Destroyed` | Nothing is left | the runner |
 | `Cancelled` | The owner cancelled before confirming; nothing was created | the owner (`POST /api/requests/{id}/cancel`) |
 
@@ -190,9 +190,11 @@ owner-only reveal is #19's job; it reads `RequestSensitiveOutputs` directly.
 | `GET /api/requests` | their own | their own | every user's, with `ownerId` and `ownerEmail` |
 | `GET /api/requests/{id}`, `GET .../logs` | 200 | 404 | 200 |
 | `POST .../confirm`, `POST .../cancel` | allowed | 404 | 403 |
+| `POST .../destroy` | allowed | 404 | allowed |
 
-Admins can see everything but have no extra power over other users' cloud resources. A request someone can't see
-answers 404, so its existence isn't revealed.
+Admins can see everything, and their one extra power over other users' cloud resources is taking them down: an admin
+can destroy a resource someone left running, but can't create, confirm or reference anything in their name. A request
+someone can't see answers 404, so its existence isn't revealed.
 
 **Droplet references.** A variable named `droplet_request_ids` or `<purpose>_droplet_request_ids` (see
 [catalog.md](catalog.md#variables)) lists droplets by request ID. At propose and again at confirm, every ID must be a
@@ -213,7 +215,7 @@ instance; several would need a database lock instead).
 **Active** means `Queued`, `Applying`, `Succeeded` or `Destroying`: confirmed, and the resource exists or is about to.
 `AwaitingConfirmation` costs nothing, and `Cancelled` and `Destroyed` are finished. `Failed` doesn't count either, so a
 failure can't lock a user out; a failed apply may still have left something behind, which the user destroys from the
-request (#16). Over a limit, confirm answers **409** with the title `Active request limit reached` and a `detail`
+request. Over a limit, confirm answers **409** with the title `Active request limit reached` and a `detail`
 saying which limit and what to do; the request stays `AwaitingConfirmation`, so it can be confirmed once something is
 destroyed.
 
