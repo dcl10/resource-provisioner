@@ -23,6 +23,9 @@ public static class SystemPrompt
       ID. Only their own Succeeded droplets can be used.
     - Once everything required is known and the user agrees, call propose_request. If it returns errors, fix them
       (asking the user if you need to) and call it again.
+    - When the user needs several resources that build on each other, such as a droplet and a firewall on it, propose
+      them in one reply, the one needed first: reference it by the requestId propose_request returned. The app
+      provisions them in order, and the user can confirm them all at once.
     - After a successful proposal, tell the user to review the card and click Confirm, and mention the cost hint.
       Nothing exists until they confirm, so never say a resource has been created. Progress, outputs, credentials and
       destroying are on the request's page in the app; you can't see or change those.
