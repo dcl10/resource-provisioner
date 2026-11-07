@@ -41,6 +41,11 @@ public partial class TerraformJobProcessor(
     switch (request?.Status)
     {
       case RequestStatus.Queued:
+        if (!await DependenciesReady(request, cancellationToken))
+        {
+          return;
+        }
+
         try
         {
           RequestStateMachine.Move(request, RequestStatus.Applying, time.GetUtcNow());
@@ -64,6 +69,43 @@ public partial class TerraformJobProcessor(
         LogNothingToDo(logger, requestId, request?.Status);
         break;
     }
+  }
+
+  /// <summary>
+  /// Whether a queued request can be applied: everything it depends on has succeeded. If one never will (it failed,
+  /// was cancelled, or is going or gone), the request moves to Failed without running. Otherwise it waits, and the
+  /// runner queues it again when the next of its dependencies finishes.
+  /// </summary>
+  private async Task<bool> DependenciesReady(ProvisioningRequest request, CancellationToken cancellationToken)
+  {
+    var dependencyIds = await db.RequestDependencies.AsNoTracking()
+      .Where(d => d.RequestId == request.Id)
+      .Select(d => d.DependsOnId)
+      .ToListAsync(cancellationToken);
+    var dependencies = await db.ProvisioningRequests.AsNoTracking()
+      .Where(x => dependencyIds.Contains(x.Id))
+      .ToListAsync(cancellationToken);
+
+    var broken = dependencies.FirstOrDefault(d =>
+      !ProvisioningRequestService.ReferenceableStatuses.Contains(d.Status));
+    if (broken is not null)
+    {
+      var link = RequestLinks.For(broken, catalog);
+      await AppendLog(request.Id, LogSource.System,
+        $"Failed: didn't run, because {RequestLinks.Describe(link)}, which it depends on, is {broken.Status}.",
+        CancellationToken.None);
+      RequestStateMachine.Move(request, RequestStatus.Failed, time.GetUtcNow());
+      await db.SaveChangesAsync(CancellationToken.None);
+      return false;
+    }
+
+    if (dependencies.Any(d => d.Status != RequestStatus.Succeeded))
+    {
+      LogWaiting(logger, request.Id);
+      return false;
+    }
+
+    return true;
   }
 
   /// <summary>Runs a job's work, moving the request to <c>Failed</c> with a log line if it throws.</summary>
@@ -256,6 +298,10 @@ public partial class TerraformJobProcessor(
 
   [LoggerMessage(Level = LogLevel.Information, Message = "Skipping the job for request {RequestId}: it's {Status}")]
   private static partial void LogNothingToDo(ILogger logger, Guid requestId, RequestStatus? status);
+
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "Request {RequestId} waits for the requests it depends on")]
+  private static partial void LogWaiting(ILogger logger, Guid requestId);
 
   [LoggerMessage(Level = LogLevel.Information,
     Message = "Skipping the job for request {RequestId}: it changed before the runner got to it")]
