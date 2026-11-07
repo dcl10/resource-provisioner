@@ -11,6 +11,8 @@
   <ItemGroup>
     <!-- Validates Keycloak-issued access tokens -->
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+    <!-- Claude, for the chat agent -->
+    <PackageReference Include="Anthropic" />
     <!-- Keycloak admin API client and the rp-api service account's client-credentials tokens (invitations) -->
     <PackageReference Include="Duende.AccessTokenManagement" />
     <PackageReference Include="Keycloak.AuthServices.Sdk.Kiota" />
