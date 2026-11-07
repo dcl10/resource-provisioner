@@ -29,6 +29,7 @@ import type { Proposal } from "@/lib/chat";
 import {
   cancelRequest,
   confirmRequest,
+  linkLabel,
   type ProvisioningRequest,
   requestPath,
 } from "@/lib/requests";
@@ -139,6 +140,22 @@ export function ProposalCard({ proposal }: { proposal: Proposal }) {
             ))}
           </TableBody>
         </Table>
+        {proposal.dependsOn?.length ? (
+          <p className="text-sm">
+            <span className="font-medium">Runs after: </span>
+            {proposal.dependsOn.map((link, i) => (
+              <span key={link.id}>
+                {i > 0 ? ", " : null}
+                <Link
+                  href={requestPath(link.id)}
+                  className="underline underline-offset-4"
+                >
+                  {linkLabel(link)}
+                </Link>
+              </span>
+            ))}
+          </p>
+        ) : null}
         <p className="text-sm">
           <span className="font-medium">Cost: </span>
           <span className="text-muted-foreground">{proposal.costHint}</span>
