@@ -38,6 +38,12 @@
           }
         ]
       }
+    },
+    {
+      "name": "group_request_id",
+      "type": "string",
+      "description": "The request ID of one of the user's groups, as a droplet's project_request_id.",
+      "references": "test-group"
     }
   ],
   "outputs": [
