@@ -68,3 +68,19 @@ export async function apiFetch<T>(
   }
   return (await response.json()) as T;
 }
+
+/**
+ * A TanStack Query `retry` rule: retry network and server errors up to three times, but never a 4xx, which won't
+ * change on retry (a request or conversation that doesn't exist, or isn't the user's).
+ * @param failureCount - how many times the query has failed
+ * @param error - the latest error
+ * @returns whether to try again
+ */
+export function retryUnlessClientError(
+  failureCount: number,
+  error: Error,
+): boolean {
+  const clientError =
+    error instanceof ApiError && error.status >= 400 && error.status < 500;
+  return !clientError && failureCount < 3;
+}
