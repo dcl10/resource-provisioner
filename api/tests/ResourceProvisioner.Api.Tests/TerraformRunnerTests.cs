@@ -72,12 +72,26 @@ public class TerraformRunnerTests : IClassFixture<ApiFactory>, IClassFixture<NoT
     }
   }
 
-  [Theory]
-  [InlineData(RequestStatus.Applying)]
-  [InlineData(RequestStatus.Destroying)]
-  public async Task Runner_FailsInterruptedRequests_AtStartup(RequestStatus status)
+  [Fact]
+  public async Task Runner_RequeuesDestroyingRequests_AtStartup()
   {
-    var request = await _factory.SeedRequestAsync("owner-c", status);
+    var request = await _factory.SeedRequestAsync("owner-b", RequestStatus.Destroying);
+    var workspace = Path.Combine(_factory.WorkspacesRoot, request.Id.ToString());
+    Directory.CreateDirectory(workspace);
+    await File.WriteAllTextAsync(Path.Combine(workspace, TerraformWorkspace.StateFile), "{}");
+
+    await using (await Start(new JobDispatcher()))
+    {
+      await WaitFor(request.Id, RequestStatus.Destroyed);
+    }
+
+    Assert.Contains(_factory.Terraform.Invocations, i => i.Arguments[0] == "destroy");
+  }
+
+  [Fact]
+  public async Task Runner_FailsInterruptedApplies_AtStartup()
+  {
+    var request = await _factory.SeedRequestAsync("owner-c", RequestStatus.Applying);
 
     await using (await Start(new JobDispatcher()))
     {
@@ -104,9 +118,10 @@ public class TerraformRunnerTests : IClassFixture<ApiFactory>, IClassFixture<NoT
     Assert.Empty(_noToken.Terraform.Invocations);
   }
 
-  private async Task<RunningRunner> Start(JobDispatcher dispatcher, ApiFactory? factory = null)
+  private Task<RunningRunner> Start(JobDispatcher dispatcher) => Start(dispatcher, _factory);
+
+  private static async Task<RunningRunner> Start(JobDispatcher dispatcher, ApiFactory factory)
   {
-    factory ??= _factory;
     var runner = new TerraformRunner(
       dispatcher,
       factory.Services.GetRequiredService<IServiceScopeFactory>(),
@@ -116,9 +131,10 @@ public class TerraformRunnerTests : IClassFixture<ApiFactory>, IClassFixture<NoT
     return new RunningRunner(runner);
   }
 
-  private async Task WaitFor(Guid id, RequestStatus status, ApiFactory? factory = null)
+  private Task WaitFor(Guid id, RequestStatus status) => WaitFor(id, status, _factory);
+
+  private static async Task WaitFor(Guid id, RequestStatus status, ApiFactory factory)
   {
-    factory ??= _factory;
     using var cts = new CancellationTokenSource(Timeout);
     while ((await factory.FindRequestAsync(id))!.Status != status)
     {
