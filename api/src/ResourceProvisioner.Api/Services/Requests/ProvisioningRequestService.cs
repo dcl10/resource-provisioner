@@ -143,6 +143,23 @@ public class ProvisioningRequestService(
     return ToResponse(request);
   }
 
+  /// <inheritdoc />
+  public async Task<ProvisioningRequestResponse> DestroyAsync(
+    Guid id,
+    RequestUser user,
+    CancellationToken cancellationToken = default)
+  {
+    var request = await FindVisible(id, user, cancellationToken);
+    EnsureCanMove(request, RequestStatus.Destroying, "destroyed");
+
+    RequestStateMachine.Move(request, RequestStatus.Destroying, time.GetUtcNow());
+    await Save(request, cancellationToken);
+
+    // Saved first: if the API stops before the runner gets to it, the runner re-queues it at startup.
+    await jobs.EnqueueAsync(request.Id, cancellationToken);
+    return ToResponse(request);
+  }
+
   /// <summary>
   /// The manifest's checks, then the droplet references in the values that passed them. Returns the values with
   /// defaults applied and every error by field path.
