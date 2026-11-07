@@ -31,38 +31,41 @@ internal static partial class ManifestChecker
 
     CheckFields(manifest.Variables, "variables", "", topLevel: true, problems);
     CheckOutputs(manifest.Outputs, problems);
-    CheckDropletReferences(manifest.Variables, problems);
+    CheckReferences(manifest.Variables, problems);
     CheckAtLeastOneOf(manifest, problems);
 
     return problems;
   }
 
-  /// <summary>
-  /// Whether a variable references the user's own droplets by request ID, by its name: <c>droplet_request_ids</c>
-  /// or <c>&lt;purpose&gt;_droplet_request_ids</c>. The API checks every ID in such a variable belongs to a
-  /// provisioned droplet of the requesting user's.
-  /// </summary>
-  /// <param name="name">The variable's name.</param>
-  /// <returns>True for a droplet-reference variable.</returns>
-  public static bool IsDropletReference(string name) =>
-    name == DropletReferenceName || name.EndsWith($"_{DropletReferenceName}", StringComparison.Ordinal);
-
-  private const string DropletReferenceName = "droplet_request_ids";
-
-  // The ownership check reads top-level arrays of strings only, so a reference anywhere else would go unchecked.
-  private static void CheckDropletReferences(IReadOnlyList<VariableSpec> variables, List<string> problems)
+  // The ownership check and the dependencies read top-level strings and arrays of strings only, so a reference
+  // anywhere else would go unchecked. Whether the referenced type exists is checked across the catalog by the loader.
+  private static void CheckReferences(IReadOnlyList<VariableSpec> variables, List<string> problems)
   {
     foreach (var variable in variables.OfType<VariableSpec>())
     {
-      if (IsDropletReference(variable.Name) &&
-          (variable.Type != VariableType.Array || variable.Items?.Type != VariableType.String))
+      if (variable.References is { } type)
       {
-        problems.Add($"{variable.Name}: a droplet reference must be an array of strings (request IDs).");
+        if (!IdRegex().IsMatch(type))
+        {
+          problems.Add($"{variable.Name}: references '{type}', which isn't a type ID.");
+        }
+
+        var shape = variable.Type == VariableType.String ||
+                    (variable.Type == VariableType.Array && variable.Items?.Type == VariableType.String);
+        if (!shape)
+        {
+          problems.Add($"{variable.Name}: a reference must be a string or an array of strings (request IDs).");
+        }
+
+        if (variable.Sensitive)
+        {
+          problems.Add($"{variable.Name}: a reference can't be sensitive; the agent sets it.");
+        }
       }
 
-      foreach (var field in NestedFields(variable).Where(f => IsDropletReference(f.Name)))
+      foreach (var field in NestedFields(variable).Where(f => f.References is not null))
       {
-        problems.Add($"{variable.Name}: droplet references ({field.Name}) must be top-level variables.");
+        problems.Add($"{variable.Name}: references ({field.Name}) must be top-level variables.");
       }
     }
   }
