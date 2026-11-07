@@ -36,6 +36,9 @@ override.tf.json
 *_override.tf
 *_override.tf.json
 
+# infra/'s own variables (your IP and SSH key); start from infra/terraform.tfvars.example
+infra/terraform.tfvars
+
 # Per-request module copies, tfvars and state written by the runner
 workspaces/
 

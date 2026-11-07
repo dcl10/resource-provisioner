@@ -22,6 +22,7 @@ Sign-in is invite-only, through Keycloak, and per-user limits cap LLM and cloud 
 ├── catalog/    One Terraform module + resource.json manifest per resource type
 ├── keycloak/   Realm export imported on first start
 ├── infra/      Terraform for the droplet that hosts the POC (separate state)
+├── deploy/     Caddyfile and scripts for the host (docker-compose.prod.yml is at the root)
 └── docs/       How everything works, one file per topic
 ```
 
@@ -38,7 +39,8 @@ docker compose --profile app up -d --build
 ```
 
 Then create the first admin in Keycloak and sign in at http://localhost:3000. Step by step, with an end-to-end
-checklist: [docs/local-development.md](docs/local-development.md).
+checklist: [docs/local-development.md](docs/local-development.md). To host it for colleagues on a DigitalOcean droplet:
+[docs/deployment.md](docs/deployment.md).
 
 ## Docs
 
