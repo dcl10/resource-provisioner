@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { ApiError, readApiError } from "@/lib/api";
+
 /** Where an invitation has got to, as the API derives it. */
 export type InvitationStatus = "Pending" | "Accepted" | "Expired" | "Revoked";
 
@@ -30,18 +32,7 @@ export type InviteValues = z.infer<typeof inviteSchema>;
 /** Base path of the invitations endpoints, through the API proxy. */
 export const INVITATIONS_URL = "/api/proxy/invitations";
 
-/**
- * An error response from the API, with a message fit to show the admin.
- */
-export class ApiError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
-    this.name = "ApiError";
-  }
-}
+export { ApiError } from "@/lib/api";
 
 /**
  * Whether an invitation can be sent again or revoked: only while it hasn't been accepted or revoked.
@@ -62,25 +53,7 @@ export async function readErrorMessage(response: Response): Promise<string> {
   if (response.status === 403) {
     return "Only admins can manage invitations.";
   }
-
-  try {
-    const problem = (await response.json()) as {
-      detail?: string;
-      title?: string;
-      errors?: Record<string, string[]>;
-    };
-    const firstError = problem.errors
-      ? Object.values(problem.errors).flat()[0]
-      : undefined;
-    return (
-      problem.detail ??
-      firstError ??
-      problem.title ??
-      `Request failed (${response.status}).`
-    );
-  } catch {
-    return `Request failed (${response.status}).`;
-  }
+  return (await readApiError(response)).message;
 }
 
 async function send<T>(path: string, init?: RequestInit): Promise<T> {
