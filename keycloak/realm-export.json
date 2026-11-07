@@ -13,13 +13,15 @@
   "bruteForceProtected": true,
   "passwordPolicy": "length(12) and notUsername and notEmail",
   "smtpServer": {
-    "host": "mailhog",
-    "port": "1025",
-    "from": "noreply@resource-provisioner.local",
+    "host": "${SMTP_HOST:mailhog}",
+    "port": "${SMTP_PORT:1025}",
+    "from": "${SMTP_FROM:noreply@resource-provisioner.local}",
     "fromDisplayName": "Resource Provisioner",
-    "auth": "false",
-    "ssl": "false",
-    "starttls": "false"
+    "auth": "${SMTP_AUTH:false}",
+    "user": "${SMTP_USER:}",
+    "password": "${SMTP_PASSWORD:}",
+    "ssl": "${SMTP_SSL:false}",
+    "starttls": "${SMTP_STARTTLS:false}"
   },
   "roles": {
     "realm": [
@@ -78,14 +80,14 @@
       "serviceAccountsEnabled": false,
       "frontchannelLogout": true,
       "redirectUris": [
-        "http://localhost:3000/*"
+        "${APP_URL:http://localhost:3000}/*"
       ],
       "webOrigins": [
-        "http://localhost:3000"
+        "${APP_URL:http://localhost:3000}"
       ],
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "http://localhost:3000/*"
+        "post.logout.redirect.uris": "${APP_URL:http://localhost:3000}/*"
       },
       "protocolMappers": [
         {
