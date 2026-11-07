@@ -30,11 +30,15 @@ public record ChatModelRequest(string System, IReadOnlyList<AgentTool> Tools, IR
 /// <param name="Content">Its content blocks in the API's wire format.</param>
 public record ChatTurn(string Role, JsonArray Content);
 
-/// <summary>A tool Claude may call, always sent with <c>strict: true</c>.</summary>
+/// <summary>A tool Claude may call.</summary>
 /// <param name="Name">The tool name.</param>
 /// <param name="Description">When to call it and what it does.</param>
 /// <param name="InputSchema">Its JSON Schema, an <c>object</c> within strict tool use's supported keywords.</param>
-public record AgentTool(string Name, string Description, JsonObject InputSchema);
+/// <param name="Strict">
+/// Whether to send it with <c>strict: true</c>, so its input always matches the schema. Off for a schema whose shape
+/// strict decoding can't follow (see <c>AgentTools</c>).
+/// </param>
+public record AgentTool(string Name, string Description, JsonObject InputSchema, bool Strict = true);
 
 /// <summary>An event from <see cref="IChatModel.StreamAsync"/>.</summary>
 public abstract record ChatModelEvent
