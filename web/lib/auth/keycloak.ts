@@ -1,6 +1,7 @@
 import type { Account } from "next-auth";
 import type { JWT } from "next-auth/jwt";
 
+import { toInternalKeycloakUrl } from "./keycloak-url";
 import { getRealmRoles } from "./roles";
 
 /** Refresh this many seconds before the access token expires, so it doesn't lapse on its way to the API. */
@@ -27,7 +28,9 @@ export async function refreshKeycloakAccessToken(token: JWT): Promise<JWT> {
     if (!token.refreshToken) throw new Error("Missing refresh token");
 
     const response = await fetch(
-      `${process.env.AUTH_KEYCLOAK_ISSUER}/protocol/openid-connect/token`,
+      toInternalKeycloakUrl(
+        `${process.env.AUTH_KEYCLOAK_ISSUER}/protocol/openid-connect/token`,
+      ),
       {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },

@@ -1,0 +1,17 @@
+# Build context for api/Dockerfile (the repo root). The web image builds from web/ with its own .dockerignore.
+**/.git
+.github
+docs
+infra
+keycloak
+web
+workspaces
+api/tests
+**/bin
+**/obj
+**/.terraform
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfplan
+**/.env*
+**/.DS_Store

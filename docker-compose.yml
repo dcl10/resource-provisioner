@@ -1,4 +1,6 @@
-# Local development services. Start with `docker compose up -d`; see docs/auth-setup.md.
+# Local development. Two ways to use it (see docs/local-development.md):
+#   docker compose up -d                          Postgres, Keycloak and MailHog; run the API and web app yourself
+#   docker compose --profile app up -d --build    the whole app, with settings and secrets from .env
 # Every password here is a local-only default. Nothing in this file is used when deployed (#21).
 services:
   # ──────────────────────────────────────────
@@ -59,6 +61,10 @@ services:
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME:-admin}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:-admin}
       KC_HTTP_PORT: 8080
+      # One public URL for browsers and tokens (the issuer), while containers reach Keycloak's back-channel endpoints
+      # (token, keys, admin API) at http://keycloak:8080. Outside Docker both are localhost:8080, so nothing changes.
+      KC_HOSTNAME: http://localhost:8080
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
     ports:
       - "8080:8080"
     volumes:
@@ -81,6 +87,81 @@ services:
       driver: "none"
     restart: unless-stopped
 
+  # ──────────────────────────────────────────
+  # The app (profile "app"). Settings and secrets come from .env: copy .env.example.
+  # ──────────────────────────────────────────
+
+  # Applies the EF Core migrations, then exits. The API waits for it; it never migrates at startup.
+  migrate:
+    profiles: [app]
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+      target: migrate
+    environment:
+      ConnectionStrings__DefaultConnection: Host=postgres-app;Port=5432;Database=resource_provisioner;Username=rp;Password=dev_password
+    depends_on:
+      postgres-app:
+        condition: service_healthy
+
+  # The API, with Terraform. http://localhost:5080/health (5000 is often taken by macOS AirPlay)
+  api:
+    profiles: [app]
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    environment:
+      ConnectionStrings__DefaultConnection: Host=postgres-app;Port=5432;Database=resource_provisioner;Username=rp;Password=dev_password
+      Keycloak__AuthServerUrl: http://keycloak:8080
+      # Plain HTTP inside the compose network.
+      Keycloak__RequireHttpsMetadata: "false"
+      Keycloak__Secret: ${KEYCLOAK_API_CLIENT_SECRET:-}
+      Invitations__AppUrl: http://localhost:3000
+      Anthropic__ApiKey: ${ANTHROPIC_API_KEY:-}
+      Anthropic__Model: ${ANTHROPIC_MODEL:-claude-sonnet-5-5}
+      Anthropic__Effort: ${ANTHROPIC_EFFORT:-low}
+      DigitalOcean__Token: ${DIGITALOCEAN_TOKEN:-}
+      Spaces__AccessId: ${SPACES_ACCESS_ID:-}
+      Spaces__SecretKey: ${SPACES_SECRET_KEY:-}
+      Limits__MaxActiveRequestsPerUser: ${LIMITS_MAX_ACTIVE_REQUESTS_PER_USER:-3}
+      Limits__MaxActiveRequestsTotal: ${LIMITS_MAX_ACTIVE_REQUESTS_TOTAL:-10}
+      Limits__ChatMessagesPerMinute: ${LIMITS_CHAT_MESSAGES_PER_MINUTE:-10}
+    ports:
+      - "5080:8080"
+    volumes:
+      # Terraform state for every request: lose it and those resources can't be destroyed from the app.
+      - workspaces:/data/workspaces
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_started
+    restart: unless-stopped
+
+  # The web app. http://localhost:3000
+  web:
+    profiles: [app]
+    build: web
+    environment:
+      AUTH_SECRET: ${AUTH_SECRET:-}
+      AUTH_URL: http://localhost:3000
+      AUTH_KEYCLOAK_ID: rp-web
+      AUTH_KEYCLOAK_SECRET: ${KEYCLOAK_WEB_CLIENT_SECRET:-}
+      # The browser's address for Keycloak, which tokens name as their issuer...
+      AUTH_KEYCLOAK_ISSUER: http://localhost:8080/realms/resource-provisioner
+      # ...and the one this container uses for its own calls to Keycloak.
+      AUTH_KEYCLOAK_INTERNAL_ISSUER: http://keycloak:8080/realms/resource-provisioner
+      API_URL: http://api:8080
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_started
+      keycloak:
+        condition: service_started
+    restart: unless-stopped
+
 volumes:
   postgres-app-data:
   postgres-keycloak-data:
+  workspaces:
