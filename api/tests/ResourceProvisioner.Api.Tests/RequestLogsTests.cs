@@ -2,7 +2,6 @@ namespace ResourceProvisioner.Api.Tests;
 
 using System.Globalization;
 using System.Net;
-using System.Text.Json.Nodes;
 using Data;
 using Fixtures;
 using Microsoft.Extensions.DependencyInjection;
@@ -52,7 +51,7 @@ public class RequestLogsTests(ApiFactory factory) : IClassFixture<ApiFactory>
 
     Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     Assert.Equal("text/event-stream", response.Content.Headers.ContentType?.MediaType);
-    var events = Parse(await response.Content.ReadAsStringAsync());
+    var events = Sse.Parse(await response.Content.ReadAsStringAsync());
     Assert.Equal(["status", "log", "log", "end"], events.Select(e => e.Type));
     Assert.Equal("Succeeded", events[0].Data["status"]!.GetValue<string>());
     Assert.Equal(ids[1].ToString(CultureInfo.InvariantCulture), events[2].Id);
@@ -69,7 +68,7 @@ public class RequestLogsTests(ApiFactory factory) : IClassFixture<ApiFactory>
     var client = User;
     client.DefaultRequestHeaders.Add("Last-Event-ID", ids[0].ToString(CultureInfo.InvariantCulture));
 
-    var events = Parse(await client.GetStringAsync($"/api/requests/{request.Id}/logs"));
+    var events = Sse.Parse(await client.GetStringAsync($"/api/requests/{request.Id}/logs"));
 
     Assert.Equal(["two"], events.Where(e => e.Type == "log").Select(e => e.Data["text"]!.GetValue<string>()));
   }
@@ -80,7 +79,7 @@ public class RequestLogsTests(ApiFactory factory) : IClassFixture<ApiFactory>
     var request = await factory.SeedRequestAsync("someone-else", RequestStatus.Succeeded);
     await AddLines(request.Id, (LogSource.Stdout, "visible to admins"));
 
-    var events = Parse(await factory.CreateAdminClient().GetStringAsync($"/api/requests/{request.Id}/logs"));
+    var events = Sse.Parse(await factory.CreateAdminClient().GetStringAsync($"/api/requests/{request.Id}/logs"));
 
     Assert.Contains(events, e => e.Type == "log");
   }
@@ -96,7 +95,7 @@ public class RequestLogsTests(ApiFactory factory) : IClassFixture<ApiFactory>
     await SetStatus(request.Id, RequestStatus.Succeeded);
 
     // The line and the new status may arrive in the same poll, so only their relative order with the end is fixed.
-    var events = Parse(await reading.WaitAsync(TimeSpan.FromSeconds(10)));
+    var events = Sse.Parse(await reading.WaitAsync(TimeSpan.FromSeconds(10)));
     Assert.Equal(("status", "Applying"), (events[0].Type, events[0].Data["status"]!.GetValue<string>()));
     Assert.Contains(events, e => e.Type == "status" && e.Data["status"]!.GetValue<string>() == "Succeeded");
     Assert.Equal("late line", Assert.Single(events, e => e.Type == "log").Data["text"]!.GetValue<string>());
@@ -108,7 +107,10 @@ public class RequestLogsTests(ApiFactory factory) : IClassFixture<ApiFactory>
     using var scope = factory.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     var entities = lines
-      .Select(l => new JobLogLine { RequestId = requestId, At = DateTimeOffset.UtcNow, Stream = l.Source, Text = l.Text })
+      .Select(l => new JobLogLine
+      {
+        RequestId = requestId, At = DateTimeOffset.UtcNow, Stream = l.Source, Text = l.Text,
+      })
       .ToList();
     db.JobLogLines.AddRange(entities);
     await db.SaveChangesAsync();
@@ -123,19 +125,4 @@ public class RequestLogsTests(ApiFactory factory) : IClassFixture<ApiFactory>
     request!.Status = status;
     await db.SaveChangesAsync();
   }
-
-  private static List<SseEvent> Parse(string body) =>
-  [
-    .. body.Split("\n\n", StringSplitOptions.RemoveEmptyEntries)
-      .Select(block => block.Split('\n'))
-      .Select(fields => new SseEvent(
-        Field(fields, "event") ?? "message",
-        Field(fields, "id"),
-        JsonNode.Parse(Field(fields, "data")!)!)),
-  ];
-
-  private static string? Field(string[] fields, string name) =>
-    fields.FirstOrDefault(f => f.StartsWith($"{name}: ", StringComparison.Ordinal))?[(name.Length + 2)..];
-
-  private sealed record SseEvent(string Type, string? Id, JsonNode Data);
 }

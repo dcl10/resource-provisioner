@@ -25,6 +25,9 @@ builder.Services.AddProvisioningRequests();
 // The Terraform runner: applies confirmed requests one at a time, each in its own workspace with its own state.
 builder.Services.AddTerraformRunner();
 
+// The chat agent (Claude with tools generated from the catalog) and its per-user message rate limit.
+builder.Services.AddChatAgent();
+
 builder.Services.AddControllers();
 builder.Services.AddHealthChecks();
 
@@ -32,6 +35,9 @@ var app = builder.Build();
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+// After authorization, so the chat limit is keyed by a signed-in user's sub.
+app.UseRateLimiter();
 
 app.MapControllers();
 

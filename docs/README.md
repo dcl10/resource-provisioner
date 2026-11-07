@@ -9,7 +9,7 @@ exist yet.
 | [web.md](web.md) | Running the web app, its layout, using the session and the API proxy, the frontend stack and shadcn conventions |
 | [auth-setup.md](auth-setup.md) | Local services, the Keycloak realm and clients, client secrets, how the web app and API handle sign-in, bootstrapping the first admin, the invite flow |
 | [catalog.md](catalog.md) | The `resource.json` manifest format, what the loader checks, variable validation, adding a resource type, the current types |
-| agent.md *(planned, #17)* | System prompt intent, agent tools, rate limits, model and effort config |
+| [agent.md](agent.md) | How a message is answered, the system prompt's intent, the four tools and their strict schemas, the conversation endpoints and events, stored history, refusals and errors, the rate limit, model and effort config |
 | [provisioning.md](provisioning.md) | The Terraform runner, applying and destroying, credentials, workspaces and state, the logs endpoint |
 | local-development.md *(planned, #20)* | Running the full stack locally, secrets, end-to-end checklist |
 | deployment.md *(planned, #21)* | Hosting on a droplet, Caddy, Keycloak production mode, SMTP, admin access |
