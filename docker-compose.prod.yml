@@ -1,0 +1,158 @@
+# The deployed stack, on the host that infra/ creates. Settings and secrets come from .env next to this file (root-only).
+# Deploy with deploy/deploy.sh; see docs/deployment.md. Only Caddy is reachable from outside; the Keycloak admin
+# console is on 127.0.0.1:8080, for an SSH tunnel.
+
+x-app-db: &app-db Host=postgres-app;Port=5432;Database=resource_provisioner;Username=rp;Password=${POSTGRES_APP_PASSWORD:?set in .env}
+
+services:
+  caddy:
+    image: caddy:2.11.9-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      APP_HOST: ${APP_HOST:?set in .env}
+      AUTH_HOST: ${AUTH_HOST:?set in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?set in .env}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - web
+      - keycloak
+    restart: unless-stopped
+
+  postgres-app:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: resource_provisioner
+      POSTGRES_USER: rp
+      POSTGRES_PASSWORD: ${POSTGRES_APP_PASSWORD:?set in .env}
+    volumes:
+      - postgres-app-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rp -d resource_provisioner"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  postgres-keycloak:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${POSTGRES_KEYCLOAK_PASSWORD:?set in .env}
+    volumes:
+      - postgres-keycloak-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.6
+    # Production mode. --import-realm creates the realm on first start only.
+    command: ["start", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres-keycloak:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${POSTGRES_KEYCLOAK_PASSWORD:?set in .env}
+      # Users and tokens see https://AUTH_HOST; containers reach the back channel (tokens, keys, admin API) at
+      # http://keycloak:8080; the admin console works only through the SSH tunnel, at http://localhost:8080.
+      KC_HOSTNAME: https://${AUTH_HOST:?set in .env}
+      KC_HOSTNAME_ADMIN: http://localhost:8080
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      # TLS ends at Caddy, which forwards X-Forwarded-* headers.
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME:-temp-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:?set in .env}
+      # Read by the realm import (keycloak/realm-export.json placeholders).
+      APP_URL: https://${APP_HOST:?set in .env}
+      # Required: the realm import refuses to start Keycloak without a valid sender.
+      SMTP_HOST: ${SMTP_HOST:?set SMTP_HOST in .env (invitation emails)}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_FROM: ${SMTP_FROM:?set SMTP_FROM in .env (the invitation emails' sender address)}
+      SMTP_AUTH: ${SMTP_AUTH:-true}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
+      SMTP_SSL: ${SMTP_SSL:-false}
+    ports:
+      # Only on the host's loopback, for: ssh -N -L 8080:127.0.0.1:8080 root@<host>
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    depends_on:
+      postgres-keycloak:
+        condition: service_healthy
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+      target: migrate
+    environment:
+      ConnectionStrings__DefaultConnection: *app-db
+    depends_on:
+      postgres-app:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    environment:
+      ConnectionStrings__DefaultConnection: *app-db
+      Keycloak__AuthServerUrl: http://keycloak:8080
+      # Plain HTTP on the private compose network; users reach Keycloak over HTTPS through Caddy.
+      Keycloak__RequireHttpsMetadata: "false"
+      Keycloak__Secret: ${KEYCLOAK_API_CLIENT_SECRET:-}
+      Invitations__AppUrl: https://${APP_HOST:?set in .env}
+      Anthropic__ApiKey: ${ANTHROPIC_API_KEY:-}
+      Anthropic__Model: ${ANTHROPIC_MODEL:-claude-sonnet-5-5}
+      Anthropic__Effort: ${ANTHROPIC_EFFORT:-low}
+      DigitalOcean__Token: ${DIGITALOCEAN_TOKEN:-}
+      Spaces__AccessId: ${SPACES_ACCESS_ID:-}
+      Spaces__SecretKey: ${SPACES_SECRET_KEY:-}
+      Limits__MaxActiveRequestsPerUser: ${LIMITS_MAX_ACTIVE_REQUESTS_PER_USER:-3}
+      Limits__MaxActiveRequestsTotal: ${LIMITS_MAX_ACTIVE_REQUESTS_TOTAL:-10}
+      Limits__ChatMessagesPerMinute: ${LIMITS_CHAT_MESSAGES_PER_MINUTE:-10}
+    volumes:
+      # Terraform state for every request. Never delete it while anything is provisioned.
+      - workspaces:/data/workspaces
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_started
+    restart: unless-stopped
+
+  web:
+    build: web
+    environment:
+      AUTH_SECRET: ${AUTH_SECRET:?set in .env}
+      AUTH_URL: https://${APP_HOST:?set in .env}
+      AUTH_KEYCLOAK_ID: rp-web
+      AUTH_KEYCLOAK_SECRET: ${KEYCLOAK_WEB_CLIENT_SECRET:-}
+      AUTH_KEYCLOAK_ISSUER: https://${AUTH_HOST:?set in .env}/realms/resource-provisioner
+      AUTH_KEYCLOAK_INTERNAL_ISSUER: http://keycloak:8080/realms/resource-provisioner
+      API_URL: http://api:8080
+    depends_on:
+      - api
+      - keycloak
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:
+  postgres-app-data:
+  postgres-keycloak-data:
+  workspaces:
