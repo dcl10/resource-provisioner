@@ -68,6 +68,16 @@ public class AgentToolsTests
   }
 
   [Fact]
+  public void VariablesSchema_ExplainsWhichRequestsAReferenceTakes()
+  {
+    var properties = AgentTools.VariablesSchema(_fixtures.Find("test-database")!)["properties"]!;
+
+    var description = properties["allowed_droplet_request_ids"]!["description"]!.GetValue<string>();
+    Assert.Contains("Request IDs of the user's own test-server requests", description);
+    Assert.Contains("pending ones are fine", description);
+  }
+
+  [Fact]
   public void ProposeRequest_OffersEachTypesVariables()
   {
     var propose = AgentTools.For(_fixtures).Single(t => t.Name == AgentTools.ProposeRequest).InputSchema;
