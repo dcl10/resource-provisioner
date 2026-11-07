@@ -39,6 +39,7 @@ public class RequestsControllerTests(HighLimitApiFactory factory) : IClassFixtur
   [InlineData("POST", $"{Route}/00000000-0000-0000-0000-000000000001/confirm")]
   [InlineData("POST", $"{Route}/00000000-0000-0000-0000-000000000001/cancel")]
   [InlineData("POST", $"{Route}/00000000-0000-0000-0000-000000000001/destroy")]
+  [InlineData("GET", $"{Route}/00000000-0000-0000-0000-000000000001/sensitive-outputs")]
   public async Task Endpoints_ReturnUnauthorized_WithoutCredentials(string method, string url)
   {
     var response = await factory.CreateAnonymousClient().SendAsync(new HttpRequestMessage(new HttpMethod(method), url));
@@ -258,6 +259,62 @@ public class RequestsControllerTests(HighLimitApiFactory factory) : IClassFixtur
 
     Assert.Equal(RequestStatus.Destroyed, (await factory.FindRequestAsync(active[0].Id))!.Status);
     Assert.Equal(HttpStatusCode.OK, (await User.PostAsync($"{Route}/{next.Id}/confirm", null)).StatusCode);
+  }
+
+  [Fact]
+  public async Task SensitiveOutputs_ReturnsTheSecrets_ForOwner_WithoutCaching()
+  {
+    var request = await factory.SeedRequestAsync(
+      _userId,
+      RequestStatus.Succeeded,
+      outputs: """{"id":"123"}""",
+      sensitiveOutputs: """{"root_password":"output-secret"}""");
+
+    var response = await User.GetAsync($"{Route}/{request.Id}/sensitive-outputs");
+
+    Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    Assert.True(JsonNode.DeepEquals(
+      JsonNode.Parse("""{"root_password":"output-secret"}"""),
+      JsonNode.Parse(await response.Content.ReadAsStringAsync())));
+    Assert.True(response.Headers.CacheControl?.NoStore);
+  }
+
+  [Fact]
+  public async Task SensitiveOutputs_ReturnsEmptyObject_WhenThereAreNone()
+  {
+    var request = await factory.SeedRequestAsync(_userId, RequestStatus.Succeeded);
+
+    var json = await User.GetStringAsync($"{Route}/{request.Id}/sensitive-outputs");
+
+    Assert.Equal("{}", json);
+  }
+
+  [Fact]
+  public async Task SensitiveOutputs_ReturnsNotFound_ForAnotherUsersRequest()
+  {
+    var others = await factory.SeedRequestAsync(
+      "someone-else",
+      RequestStatus.Succeeded,
+      sensitiveOutputs: """{"root_password":"output-secret"}""");
+
+    var response = await User.GetAsync($"{Route}/{others.Id}/sensitive-outputs");
+
+    Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    Assert.DoesNotContain("output-secret", await response.Content.ReadAsStringAsync());
+  }
+
+  [Fact]
+  public async Task SensitiveOutputs_ReturnsForbidden_ForAdminOnAnotherUsersRequest()
+  {
+    var others = await factory.SeedRequestAsync(
+      "someone-else",
+      RequestStatus.Succeeded,
+      sensitiveOutputs: """{"root_password":"output-secret"}""");
+
+    var response = await factory.CreateAdminClient().GetAsync($"{Route}/{others.Id}/sensitive-outputs");
+
+    Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    Assert.DoesNotContain("output-secret", await response.Content.ReadAsStringAsync());
   }
 
   [Theory]
