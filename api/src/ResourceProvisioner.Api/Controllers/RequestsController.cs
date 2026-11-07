@@ -58,6 +58,20 @@ public class RequestsController(
   public Task<ActionResult<ProvisioningRequestResponse>> Confirm(Guid id, CancellationToken cancellationToken) =>
     Handle(() => requests.ConfirmAsync(id, Caller, cancellationToken));
 
+  /// <summary>
+  /// Confirms several requests at once (the chat's Confirm all), all or none: limits are checked for the whole set,
+  /// and they're queued in dependency order. A request that depends on one still awaiting confirmation can only be
+  /// confirmed with it.
+  /// </summary>
+  /// <param name="body">The request IDs.</param>
+  /// <param name="cancellationToken">Cancels the request.</param>
+  /// <returns>The queued requests, in the order given.</returns>
+  [HttpPost("confirm")]
+  public Task<ActionResult<IReadOnlyList<ProvisioningRequestResponse>>> ConfirmMany(
+    ConfirmRequestsRequest body,
+    CancellationToken cancellationToken) =>
+    Handle(() => requests.ConfirmManyAsync(body.RequestIds, Caller, cancellationToken));
+
   /// <summary>The owner's cancel, before confirming.</summary>
   /// <param name="id">Request ID.</param>
   /// <param name="cancellationToken">Cancels the request.</param>
