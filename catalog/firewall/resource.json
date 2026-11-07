@@ -3,6 +3,7 @@
   "displayName": "Cloud Firewall",
   "description": "A DigitalOcean Cloud Firewall that filters traffic to and from one or more of the user's own droplets. Pick this to restrict which ports and addresses can reach a droplet the user already has; find the droplet with list_my_resources. It can't protect anyone else's droplets, databases or buckets.",
   "costHint": "Free.",
+  "free": true,
   "variables": [
     {
       "name": "name",

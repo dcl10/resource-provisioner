@@ -30,3 +30,11 @@ resource "digitalocean_spaces_key" "this" {
     permission = "readwrite"
   }
 }
+
+# Only with a project: puts the bucket in it. Destroying this moves the bucket back to the default
+# project, just before the bucket itself is destroyed.
+resource "digitalocean_project_resources" "this" {
+  count     = var.rp_project_id == "" ? 0 : 1
+  project   = var.rp_project_id
+  resources = [digitalocean_spaces_bucket.this.urn]
+}

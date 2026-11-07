@@ -1,5 +1,7 @@
 namespace ResourceProvisioner.Api.ResourceCatalog;
 
+using Services.Requests;
+
 using System.Text.Json;
 
 /// <summary>Reads every <c>&lt;type&gt;/resource.json</c> under the catalog folder and checks it.</summary>
@@ -93,8 +95,19 @@ public static class CatalogLoader
 
     // References point at other types, so they can only be checked once every manifest is read.
     var ids = entries.Select(e => e.Manifest.Id).ToHashSet(StringComparer.Ordinal);
+    var byId = entries.ToDictionary(e => e.Manifest.Id, e => e.Manifest, StringComparer.Ordinal);
     foreach (var entry in entries)
     {
+      foreach (var variable in entry.Manifest.Variables.Where(v =>
+                 RunnerVariables.DependencyVariable(v) is not null &&
+                 byId.TryGetValue(v.References!, out var target) &&
+                 target.Outputs.All(o => o.Name != RunnerVariables.DependencyOutput)))
+      {
+        problems.Add($"{Path.Combine(entry.ModuleDirectory, ManifestFileName)}:{Environment.NewLine}" +
+                     $"  - {variable.Name}: the runner reads the '{RunnerVariables.DependencyOutput}' output of " +
+                     $"'{variable.References}', which has none.");
+      }
+
       var unknown = entry.Manifest.Variables.Where(v => v.References is not null && !ids.Contains(v.References));
       foreach (var variable in unknown)
       {

@@ -11,8 +11,8 @@ using Microsoft.Extensions.Options;
 
 /// <summary>
 /// <see cref="IChatModel"/> on the Anthropic Messages API (the official <c>Anthropic</c> SDK), streaming. Uses the
-/// beta endpoint for server-side refusal fallback (<c>fallbacks: "default"</c>), sends every tool with
-/// <c>strict: true</c>, and caches the system prompt and tools across turns.
+/// beta endpoint for server-side refusal fallback (<c>fallbacks: "default"</c>), sends tools strict when they ask to
+/// be, and caches the system prompt and tools across turns.
 /// </summary>
 /// <param name="client">The Anthropic client.</param>
 /// <param name="options">The model, effort and API key.</param>
@@ -163,7 +163,7 @@ public partial class AnthropicChatModel(
     {
       Name = tool.Name,
       Description = tool.Description,
-      Strict = true,
+      Strict = tool.Strict,
       InputSchema = InputSchema.FromRawUnchecked(ToElements(tool.InputSchema)),
     };
 

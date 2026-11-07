@@ -67,6 +67,7 @@ a folder, with no API or agent code change.
 | `displayName` | yes | Human name, shown in the UI and the confirmation summary. |
 | `description` | yes | What the resource is and when to pick it. The agent reads this to choose a type, so say what it's for. |
 | `costHint` | yes | A rough monthly cost, shown before the user confirms. |
+| `free` | no | `true` if the type costs nothing in DigitalOcean (`project`, `firewall`). Free types don't count towards the [active-request limits](architecture.md#spend-caps). |
 | `variables` | no | What a request can set. See [Variables](#variables). |
 | `outputs` | no | Every output in `outputs.tf`. See [Outputs](#outputs). |
 | `atLeastOneOf` | no | Groups of variables of which a request must set at least one. See [Rules across variables](#rules-across-variables). |
@@ -111,6 +112,11 @@ creates; a request that sets `rp_tags` is rejected as an unknown field.
 - `rp_name_suffix` (`string`, default `""`): a short value from the request ID (up to 8 lowercase letters or digits).
   The resource's DigitalOcean name is `<name>-<rp_name_suffix>`, so names never clash in the shared account. Set the
   manifest's `name` `maxLength` to the resource's name limit minus 9 (for `-` and the suffix).
+- `rp_<x>_id` (`string`, default `""`), for each single reference named `<x>_request_id` (a `string` with
+  `references`): the referenced request's `id` output, since a module can't read another request's state. For
+  example, `project_request_id` gives `rp_project_id`, the project's DigitalOcean ID; it's `""` when the reference
+  isn't set. The referenced request has succeeded by the time this one runs, and the value stays in the workspace's
+  tfvars for destroy. The loader checks the module declares it and the referenced type has an `id` output.
 
 **Provider credentials** never appear as variables. A module declares an empty `provider` block, and the runner passes
 the token in the environment (`DIGITALOCEAN_TOKEN` for the `digitalocean/digitalocean` provider).
@@ -213,7 +219,8 @@ endpoint, it requires sign-in.
 
 ## Mapping to tool schemas
 
-`AgentTools` generates the agent's tool input schemas from the manifests with `strict: true`. Strict mode supports
+`AgentTools` generates the agent's tool input schemas from the manifests, within the keywords strict tool use
+supports, though `propose_request` itself is sent without `strict` ([agent.md](agent.md#tools) says why). Strict mode supports
 `type`, `enum`, `anyOf`, `required`, `description`, nested objects and arrays, and requires
 `additionalProperties: false` on every object. It does **not** support `minimum`/`maximum`, `minLength`/`maxLength` or
 array length constraints, and supports `pattern` only partly (a pattern it can't compile fails the whole request), so
@@ -231,9 +238,9 @@ enforces them on the server. Mapping:
 Because strict mode needs a fixed schema, the nesting in a manifest is finite (no recursive types).
 
 **Size limits.** Every strict schema in a request counts together: at most 24 optional properties (a property not in
-its object's `required`, nested ones included) and 16 `anyOf` parameters (`propose_request` uses one). The catalog's
-four types use 12 optional properties today. `AgentToolsTests.RealCatalog_StaysWithinStrictToolLimits` fails if a new
-type pushes the real catalog over a limit; mark more variables `required`, or drop optional ones, to fit.
+its object's `required`, nested ones included), 16 `anyOf` parameters and 20 strict tools. The variables' schemas are
+only in `propose_request`, which isn't strict, so adding types doesn't use up these limits.
+`AgentToolsTests.RealCatalog_StaysWithinStrictToolLimits` still checks the strict tools.
 
 ## Adding a resource type
 
@@ -253,8 +260,13 @@ No API or agent code changes.
 | --- | --- |
 | `droplet` | A Linux VM: the three cheapest Basic sizes ($4, $6, $12 a month), six regions, Ubuntu 22.04/24.04/26.04 LTS or Debian 13. See [Droplet](#droplet). |
 | `firewall` | A free Cloud Firewall on up to five of the user's own droplets, named by their request IDs: typed inbound rules, outbound open to anywhere unless set. See [Cloud Firewall](#cloud-firewall). |
+| `project` | A free DigitalOcean project that groups the user's droplets, databases and buckets; those take its request ID as `project_request_id`. See [Project](#project). |
 | `postgres` | A single-node managed PostgreSQL cluster ($15 or $30 a month), six regions, PostgreSQL 16, 17 or 18, with an app database and non-admin user, reachable only from the user's own droplets and listed IPv4 addresses. See [Managed Postgres](#managed-postgres). |
 | `spaces-bucket` | A private Spaces (S3-compatible) bucket in one of six regions, with an access key limited to that bucket. Part of the account's $5 a month Spaces subscription. See [Spaces bucket](#spaces-bucket). |
+
+Droplets, Postgres clusters and Spaces buckets take an optional `project_request_id` (`"references": "project"`, a
+lowercase GUID) to go in one of the user's projects; without it they stay in the account's default project. Firewalls
+can't be in a project (a DigitalOcean limitation).
 
 ### Droplet
 
@@ -374,3 +386,17 @@ and [`digitalocean_spaces_key`](https://registry.terraform.io/providers/digitalo
   Ownership of a bucket is tracked by its request only.
 - **Outputs:** `name`, `region`, `bucket_domain_name`, `endpoint` (use `https://<endpoint>` as the S3 endpoint URL),
   and the sensitive `access_key_id` and `secret_access_key`.
+
+### Project
+
+- **What it is:** a `digitalocean_project` named `<name>-<rp_name_suffix>`, with an optional `description` (up to 255
+  characters), a `purpose` from DigitalOcean's list (default `Web Application`) and an `environment` (`Development`,
+  `Staging` or `Production`; default `Development`). `free: true`.
+- **Members:** droplets, Postgres clusters and Spaces buckets with `project_request_id` set. The runner gives them
+  `rp_project_id`; the droplet and bucket modules add a `digitalocean_project_resources`, and the Postgres cluster
+  sets its own `project_id`. The project can still be pending when a member is proposed: it's provisioned first
+  ([architecture.md](architecture.md#dependencies)).
+- **Destroying:** refused while a member may still exist (DigitalOcean refuses to delete a non-empty project too).
+  Destroying a member moves it back to the default project just before deleting it.
+- **`rp_tags` is declared but unused:** projects can't be tagged. Ownership is tracked by the request.
+- **Outputs:** `id` and `name`, neither sensitive.

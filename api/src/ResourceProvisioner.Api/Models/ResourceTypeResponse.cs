@@ -10,6 +10,7 @@ using ResourceCatalog;
 /// <param name="CostHint">A rough cost.</param>
 /// <param name="Variables">The variables a request can set, with their types and constraints.</param>
 /// <param name="Outputs">What the resource reports once provisioned, with which outputs are secrets.</param>
+/// <param name="Free">Whether it costs nothing, so it doesn't count towards the active-request limits.</param>
 /// <param name="AtLeastOneOf">Groups of variables of which a request must set at least one; left out when none.</param>
 public record ResourceTypeResponse(
   string Id,
@@ -18,6 +19,7 @@ public record ResourceTypeResponse(
   string CostHint,
   IReadOnlyList<VariableSpec> Variables,
   IReadOnlyList<OutputSpec> Outputs,
+  bool Free,
   [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
   IReadOnlyList<IReadOnlyList<string>>? AtLeastOneOf)
 {
@@ -26,5 +28,5 @@ public record ResourceTypeResponse(
   /// <returns>The response.</returns>
   public static ResourceTypeResponse From(ResourceManifest manifest) =>
     new(manifest.Id, manifest.DisplayName, manifest.Description, manifest.CostHint, manifest.Variables,
-      manifest.Outputs, manifest.AtLeastOneOf);
+      manifest.Outputs, manifest.Free, manifest.AtLeastOneOf);
 }

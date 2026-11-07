@@ -1,0 +1,18 @@
+{
+  "id": "test-group",
+  "displayName": "Test group",
+  "description": "A fixture resource type for tests, free like a project. Not a real module.",
+  "costHint": "Free.",
+  "free": true,
+  "variables": [
+    {
+      "name": "name",
+      "type": "string",
+      "description": "Group name.",
+      "required": true
+    }
+  ],
+  "outputs": [
+    { "name": "id", "description": "Group ID." }
+  ]
+}

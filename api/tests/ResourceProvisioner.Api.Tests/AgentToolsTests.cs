@@ -28,6 +28,17 @@ public class AgentToolsTests
   }
 
   [Fact]
+  public void For_SendsEveryToolStrict_ExceptProposeRequest()
+  {
+    var strict = AgentTools.For(_fixtures).ToDictionary(t => t.Name, t => t.Strict);
+
+    Assert.False(strict[AgentTools.ProposeRequest]);
+    Assert.True(strict[AgentTools.ListResourceTypes]);
+    Assert.True(strict[AgentTools.GetResourceSpec]);
+    Assert.True(strict[AgentTools.ListMyResources]);
+  }
+
+  [Fact]
   public void For_UsesOnlyStrictKeywords_AndClosesEveryObject()
   {
     foreach (var tool in AgentTools.For(_fixtures))
@@ -89,14 +100,14 @@ public class AgentToolsTests
   }
 
   /// <summary>
-  /// The real catalog's tools must fit strict tool use's limits, or every chat request fails with a 400. Adding a
-  /// module with many optional variables fails here first.
+  /// The real catalog's strict tools must fit strict tool use's limits, or every chat request fails with a 400.
   /// </summary>
   [Fact]
   public void RealCatalog_StaysWithinStrictToolLimits()
   {
     var root = CatalogLoader.ResolveRoot("catalog", AppContext.BaseDirectory);
-    var tools = AgentTools.For(new CatalogService(CatalogLoader.Load(root)));
+    // Only strict schemas count towards the limits.
+    var tools = AgentTools.For(new CatalogService(CatalogLoader.Load(root))).Where(t => t.Strict).ToList();
 
     var optional = 0;
     var unions = 0;

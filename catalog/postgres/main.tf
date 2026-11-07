@@ -7,6 +7,9 @@ resource "digitalocean_database_cluster" "this" {
   region     = var.region
   node_count = 1
   tags       = var.rp_tags
+
+  # The user's project, if they chose one; otherwise the account's default project.
+  project_id = var.rp_project_id == "" ? null : var.rp_project_id
 }
 
 # The app's own database and non-admin user, always created. The main outputs are for these;

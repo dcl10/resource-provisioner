@@ -239,6 +239,7 @@ instance; several would need a database lock instead).
 | `Limits:MaxActiveRequestsTotal` | `10` | every user's active requests together |
 
 **Active** means `Queued`, `Applying`, `Succeeded` or `Destroying`: confirmed, and the resource exists or is about to.
+Free types (`"free": true` in the manifest: projects, firewalls) never count, whether active or being confirmed.
 `AwaitingConfirmation` costs nothing, and `Cancelled` and `Destroyed` are finished. `Failed` doesn't count either, so a
 failure can't lock a user out; a failed apply may still have left something behind, which the user destroys from the
 request. Over a limit, confirm answers **409** with the title `Active request limit reached` and a `detail`

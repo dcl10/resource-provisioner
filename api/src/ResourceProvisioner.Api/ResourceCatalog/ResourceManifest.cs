@@ -20,6 +20,12 @@ public record ResourceManifest
   /// <summary>A rough cost, such as "About $4 to $6 a month", shown before the user confirms.</summary>
   public required string CostHint { get; init; }
 
+  /// <summary>
+  /// Whether the type costs nothing in DigitalOcean (a project, a firewall). Free types don't count towards the
+  /// active-request limits.
+  /// </summary>
+  public bool Free { get; init; }
+
   /// <summary>The variables a request can set, each matching a <c>variable</c> in <c>variables.tf</c>.</summary>
   public IReadOnlyList<VariableSpec> Variables { get; init; } = [];
 

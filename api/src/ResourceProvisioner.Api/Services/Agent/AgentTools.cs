@@ -9,6 +9,13 @@ using ResourceCatalog;
 /// JSON Schema keywords strict tool use supports: types, <c>enum</c>, <c>anyOf</c>, <c>required</c> and
 /// <c>additionalProperties: false</c>. Constraints strict mode can't express (patterns, lengths, ranges, item counts,
 /// defaults) go into descriptions, and the server checks them in <c>propose_request</c>.
+/// <para>
+/// <c>propose_request</c> is the one tool sent without <c>strict</c>. Its <c>variables</c> is an <c>anyOf</c> of every
+/// type's variables, and strict decoding writes required properties first and commits to whichever branch still
+/// matches: after <c>name</c> and <c>region</c> only the Spaces bucket's shape fits, so a droplet's
+/// <c>ssh_public_key</c> could never be written. Unconstrained, Claude writes the type it means, and the server's
+/// validation (the authority either way) returns any errors for it to fix.
+/// </para>
 /// </summary>
 public static class AgentTools
 {
@@ -76,7 +83,8 @@ public static class AgentTools
             ["description"] = "The variables, matching the spec of the chosen type (get_resource_spec).",
             ["anyOf"] = new JsonArray([.. catalog.Types.Select(VariablesSchema)]),
           }, true),
-        ])),
+        ]),
+        Strict: false),
     ];
   }
 

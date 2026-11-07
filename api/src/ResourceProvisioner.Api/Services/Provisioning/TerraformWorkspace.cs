@@ -37,9 +37,16 @@ public static class TerraformWorkspace
   /// <param name="workspacesRoot"><c>Workspaces:Root</c>.</param>
   /// <param name="moduleDirectory">The type's catalog folder.</param>
   /// <param name="request">The request.</param>
+  /// <param name="dependencyVariables">
+  /// Runner variables taken from the requests it depends on (<c>RunnerVariables.ForDependencies</c>); laid over too.
+  /// </param>
   /// <returns>The workspace's full path.</returns>
   /// <exception cref="JobFailedException">The workspace already holds state, which a fresh apply must not touch.</exception>
-  public static string Prepare(string workspacesRoot, string moduleDirectory, ProvisioningRequest request)
+  public static string Prepare(
+    string workspacesRoot,
+    string moduleDirectory,
+    ProvisioningRequest request,
+    JsonObject? dependencyVariables = null)
   {
     var workspace = PathFor(workspacesRoot, request.Id);
     if (File.Exists(Path.Combine(workspace, StateFile)))
@@ -51,7 +58,7 @@ public static class TerraformWorkspace
     CopyModule(moduleDirectory, workspace);
 
     var variables = JsonNode.Parse(request.Variables)?.AsObject() ?? [];
-    foreach (var (name, value) in RunnerVariables.For(request))
+    foreach (var (name, value) in RunnerVariables.For(request).Concat(dependencyVariables ?? []))
     {
       variables[name] = value?.DeepClone();
     }

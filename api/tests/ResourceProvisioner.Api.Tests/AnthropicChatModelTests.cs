@@ -50,7 +50,25 @@ public class AnthropicChatModelTests
   }
 
   [Fact]
-  public void BuildParams_SendsEveryToolStrict_WithItsSchemaUnchanged()
+  public void BuildParams_SendsANonStrictToolWithoutStrict()
+  {
+    var schema = new JsonObject
+    {
+      ["type"] = "object",
+      ["properties"] = new JsonObject(),
+      ["required"] = new JsonArray(),
+      ["additionalProperties"] = false,
+    };
+    var tool = new AgentTool("propose_it", "Proposes it.", schema, Strict: false);
+    var parameters = Model().BuildParams(Request([], tool));
+
+    var sent = Assert.Single(Body(parameters)["BodyData"]!["tools"]!.AsArray())!;
+
+    Assert.NotEqual(true, sent["strict"]?.GetValue<bool>());
+  }
+
+  [Fact]
+  public void BuildParams_SendsAStrictToolStrict_WithItsSchemaUnchanged()
   {
     var schema = new JsonObject
     {

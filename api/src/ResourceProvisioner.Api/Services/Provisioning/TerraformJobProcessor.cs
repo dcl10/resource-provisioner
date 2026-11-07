@@ -1,6 +1,7 @@
 namespace ResourceProvisioner.Api.Services.Provisioning;
 
 using System.Text;
+using System.Text.Json.Nodes;
 using Config;
 using Data;
 using Microsoft.EntityFrameworkCore;
@@ -72,6 +73,33 @@ public partial class TerraformJobProcessor(
   }
 
   /// <summary>
+  /// The runner variables a request takes from what it depends on (<see cref="RunnerVariables.ForDependencies"/>),
+  /// such as the project ID for <c>project_request_id</c>. Its dependencies have all succeeded by now.
+  /// </summary>
+  private async Task<JsonObject> DependencyVariables(
+    ProvisioningRequest request,
+    ResourceManifest manifest,
+    CancellationToken cancellationToken)
+  {
+    var dependencyIds = await db.RequestDependencies.AsNoTracking()
+      .Where(d => d.RequestId == request.Id)
+      .Select(d => d.DependsOnId)
+      .ToListAsync(cancellationToken);
+    var outputs = await db.ProvisioningRequests.AsNoTracking()
+      .Where(x => dependencyIds.Contains(x.Id))
+      .ToDictionaryAsync(x => x.Id, x => x.Outputs, cancellationToken);
+
+    try
+    {
+      return RunnerVariables.ForDependencies(manifest, JsonNode.Parse(request.Variables)!.AsObject(), outputs);
+    }
+    catch (InvalidOperationException ex)
+    {
+      throw new JobFailedException(ex.Message);
+    }
+  }
+
+  /// <summary>
   /// Whether a queued request can be applied: everything it depends on has succeeded. If one never will (it failed,
   /// was cancelled, or is going or gone), the request moves to Failed without running. Otherwise it waits, and the
   /// runner queues it again when the next of its dependencies finishes.
@@ -139,7 +167,8 @@ public partial class TerraformJobProcessor(
     var workspace = TerraformWorkspace.Prepare(
       workspaces.Value.Root,
       catalog.GetModuleDirectory(request.Type),
-      request);
+      request,
+      await DependencyVariables(request, manifest, cancellationToken));
 
     await Step(request.Id, workspace, environment, ["init", "-input=false", "-no-color"], cancellationToken);
     await Step(request.Id, workspace, environment,

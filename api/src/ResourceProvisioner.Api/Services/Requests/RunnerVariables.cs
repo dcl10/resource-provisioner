@@ -2,6 +2,7 @@ namespace ResourceProvisioner.Api.Services.Requests;
 
 using System.Text.Json.Nodes;
 using Models;
+using ResourceCatalog;
 
 /// <summary>
 /// The Terraform variables the runner forces on every module, worked out from the request alone so neither the user
@@ -58,6 +59,62 @@ public static class RunnerVariables
   /// <param name="requestId">The request ID.</param>
   /// <returns>The tag.</returns>
   public static string RequestTag(Guid requestId) => $"rp-{requestId:D}";
+
+  /// <summary>The output of a referenced request that its dependency variable carries.</summary>
+  public const string DependencyOutput = "id";
+
+  private const string SingleReferenceSuffix = "_request_id";
+
+  /// <summary>
+  /// The runner variable a reference sets, if any: a string reference named <c>&lt;x&gt;_request_id</c> (such as
+  /// <c>project_request_id</c>) gives the module <c>rp_&lt;x&gt;_id</c> (<c>rp_project_id</c>), the referenced
+  /// request's <c>id</c> output, since a module can't read another request's state.
+  /// </summary>
+  /// <param name="variable">A manifest variable.</param>
+  /// <returns>The runner variable's name, or null.</returns>
+  public static string? DependencyVariable(VariableSpec variable) =>
+    variable.References is not null &&
+    variable.Type == VariableType.String &&
+    variable.Name.EndsWith(SingleReferenceSuffix, StringComparison.Ordinal) &&
+    variable.Name.Length > SingleReferenceSuffix.Length
+      ? $"rp_{variable.Name[..^SingleReferenceSuffix.Length]}_id"
+      : null;
+
+  /// <summary>
+  /// The dependency variables for a request: for each <see cref="DependencyVariable"/> it sets, the referenced
+  /// request's <see cref="DependencyOutput"/> output.
+  /// </summary>
+  /// <param name="manifest">The request's type.</param>
+  /// <param name="variables">The request's variables.</param>
+  /// <param name="outputs">Referenced requests' non-sensitive outputs (JSON objects), by request ID.</param>
+  /// <returns>The variables to add to the tfvars.</returns>
+  /// <exception cref="InvalidOperationException">
+  /// A referenced request has no such output (it hasn't succeeded).
+  /// </exception>
+  public static JsonObject ForDependencies(
+    ResourceManifest manifest,
+    JsonObject variables,
+    IReadOnlyDictionary<Guid, string?> outputs)
+  {
+    var result = new JsonObject();
+    foreach (var variable in manifest.Variables)
+    {
+      if (DependencyVariable(variable) is not { } name ||
+          variables[variable.Name] is not JsonValue value ||
+          !value.TryGetValue<string>(out var reference) ||
+          !Guid.TryParse(reference, out var id))
+      {
+        continue;
+      }
+
+      var output = outputs.GetValueOrDefault(id) is { } json ? JsonNode.Parse(json)?[DependencyOutput] : null;
+      result[name] = output?.DeepClone() ??
+                     throw new InvalidOperationException(
+                       $"Request {id}, referenced by {variable.Name}, has no '{DependencyOutput}' output.");
+    }
+
+    return result;
+  }
 
   /// <summary>The runner's variables for a request, to merge over its own variables in the tfvars.</summary>
   /// <param name="request">The request.</param>

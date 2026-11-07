@@ -15,3 +15,11 @@ resource "digitalocean_droplet" "this" {
     ssh_pwauth          = false
   })}"
 }
+
+# Only with a project: puts the droplet in it. Destroying this moves the droplet back to the
+# default project, just before the droplet itself is destroyed.
+resource "digitalocean_project_resources" "this" {
+  count     = var.rp_project_id == "" ? 0 : 1
+  project   = var.rp_project_id
+  resources = [digitalocean_droplet.this.urn]
+}
