@@ -1,6 +1,7 @@
 namespace ResourceProvisioner.Api.ResourceCatalog;
 
 using System.Text.RegularExpressions;
+using Services.Requests;
 
 /// <summary>
 /// Checks that a manifest matches its Terraform module: the module files exist, every manifest variable is declared in
@@ -37,6 +38,17 @@ internal static partial class TerraformModuleChecker
       {
         problems.Add($"variables.{variable.Name}: sensitive is {Bool(variable.Sensitive)} in resource.json but " +
                      $"{Bool(sensitive)} in variables.tf.");
+      }
+    }
+
+    // A single reference named <x>_request_id gets rp_<x>_id from the runner, so the module must take it.
+    foreach (var reference in manifest.Variables.Where(v => RunnerVariables.DependencyVariable(v) is not null))
+    {
+      var runnerVariable = RunnerVariables.DependencyVariable(reference)!;
+      if (!variables.ContainsKey(runnerVariable))
+      {
+        problems.Add($"variables.{reference.Name}: the runner sets {runnerVariable} from it, but variables.tf " +
+                     "doesn't declare it.");
       }
     }
 
