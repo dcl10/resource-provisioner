@@ -42,10 +42,23 @@ POST /api/requests/{id}/destroy ─▶ status Destroying ─┴─▶ IJobDispat
 
 The job never sees the user or the LLM: everything it runs comes from the vetted module and the validated variables.
 
+### Dependencies
+
+A request that references others ([architecture.md](architecture.md#dependencies)) is only applied once all of them
+have `Succeeded`. When the runner takes a queued request, it first reads what it depends on:
+
+- **All succeeded:** it's applied as above.
+- **Some still pending** (queued or applying): it's left `Queued`, and the API log notes it's waiting. After every job,
+  the runner queues the requests waiting on that one again, so a sequence runs in order whatever order it was queued
+  in, and still runs after a restart (startup recovery re-queues every `Queued` request).
+- **One failed, was cancelled, or is being or has been destroyed:** it moves `Queued → Failed` without running
+  Terraform, with the log line `Failed: didn't run, because <type> "<name>" (<id>), which it depends on, is <status>.`
+
 ## Destroying
 
 `POST /api/requests/{id}/destroy` is allowed from `Succeeded` or `Failed` (a failed apply or a failed destroy), by the
-owner or an admin (see [architecture.md](architecture.md#ownership)); any other status answers 409. It moves the
+owner or an admin (see [architecture.md](architecture.md#ownership)), and only once nothing that depends on it can
+still exist (see [Dependencies](architecture.md#dependencies)); otherwise it answers 409. It moves the
 request to `Destroying` and queues it. The runner then:
 
 1. Checks the workspace for `terraform.tfstate`. Without it, Terraform never created anything (the apply failed before

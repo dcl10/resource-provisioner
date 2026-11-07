@@ -115,13 +115,23 @@ Assistant text is Markdown, rendered by `Markdown` with `remark-gfm` and `rehype
 request's current status (`GET /api/requests/<id>`), so an old proposal shows where it got to. While it awaits
 confirmation, **Confirm** and **Cancel** call `POST /api/requests/<id>/confirm` or `/cancel`. Confirming shows a toast
 with a **View request** action and swaps the buttons for a link to the request page. Errors show on the card and in a
-toast; over an active-request limit, the card explains it under "You're at your limit" with the API's advice.
+toast; over an active-request limit, the card explains it under "You're at your limit" with the API's advice. A
+proposal that references others says **Runs after** with links to them; confirming it before them is refused by the API
+with a message saying which to confirm first.
+
+When a reply has two or more proposals still awaiting confirmation, `ConfirmAllButton` offers **Confirm all (N)**,
+which calls `POST /api/requests/confirm` with their IDs: the API checks the spend limits for all of them and queues
+them in dependency order, or confirms none. It reads the statuses from the same queries as the cards, so both update
+together.
 
 ## The requests pages
 
 `/requests` lists the user's requests (everyone's for an admin, with an **Owner** column) in a TanStack Table: type
 (linking to the request), name, status and when it was created. `/requests/<id>` shows one request: its status, the
-settings it was created with, its outputs (described from the catalog), the Terraform log, and **Destroy**.
+settings it was created with, its outputs (described from the catalog), the Terraform log, and **Destroy**. A request
+that references others, or that others reference, shows them under **Related requests** (**Depends on**, **Needed
+by**), with their statuses. While queued, it says what it's **waiting for**. While something that depends on it may
+still exist, Destroy is replaced by the requests to destroy first.
 
 - **Status** shows as a `StatusBadge`, with a spinner while a job is queued or running. The list and the request
   re-read themselves every 3 seconds while a job is in progress (`useRequests` / `useRequest`), and the chat's proposal

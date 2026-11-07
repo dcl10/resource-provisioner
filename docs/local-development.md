@@ -107,13 +107,17 @@ that touches sign-in, the agent, the runner or the images.
    tagged `resource-provisioner`, `rp-<request ID>` and `rp-owner-...`.
 7. **Firewall on its tag:** in the chat, ask for a firewall allowing SSH to that droplet. The agent finds it with
    `list_my_resources` and proposes a firewall targeting its request ID. Confirm it. In DigitalOcean, the firewall
-   applies to the droplet through its `rp-<request ID>` tag.
+   applies to the droplet through its `rp-<request ID>` tag. While the firewall exists, the droplet's page offers no
+   Destroy, only "first destroy Cloud firewall ...".
 8. **Secrets (optional; the cost hint on its card says what it's billed at):** droplets and firewalls have no secret outputs. To check
    the reveal, ask for a Spaces bucket or a Postgres database: its request page masks the keys or passwords until the
    owner clicks **Reveal secrets**. Signed in as the admin, that request has no reveal at all. Destroy it afterwards.
 9. **Destroy both:** destroy the firewall, then the droplet, from their request pages. Each confirms in a dialog, then
    streams `terraform destroy` and ends **Destroyed**. Nothing is left in DigitalOcean.
-10. **Limits:** optionally, set `LIMITS_MAX_ACTIVE_REQUESTS_PER_USER=1` in `.env`, run
+10. **A sequence in one go:** in a new conversation, ask for a droplet and a firewall allowing SSH to it, together. The
+    agent proposes both; the firewall's card says **Runs after** the droplet. Click **Confirm all (2)**: the droplet is
+    provisioned first, the firewall's page says it's waiting for it, then provisions. Destroy both again.
+11. **Limits:** optionally, set `LIMITS_MAX_ACTIVE_REQUESTS_PER_USER=1` in `.env`, run
     `docker compose --profile app up -d` again, and confirm two proposals. The second card says you're at your limit.
 
 ## Troubleshooting
