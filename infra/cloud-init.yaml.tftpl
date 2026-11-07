@@ -1,0 +1,40 @@
+#cloud-config
+# First boot of the host: mount the data volume, install Docker with its data on the volume, clone the repo onto the
+# volume and create its root-only .env. Deploying is then deploy/deploy.sh (see docs/deployment.md).
+package_update: true
+package_upgrade: true
+packages:
+  - ca-certificates
+  - curl
+  - git
+  - openssl
+  - unattended-upgrades
+
+write_files:
+  # Docker keeps images, containers and volumes (both databases, the Terraform workspaces) on the data volume.
+  - path: /etc/docker/daemon.json
+    permissions: "0644"
+    content: |
+      {
+        "data-root": "${data_mount}/docker",
+        "log-driver": "json-file",
+        "log-opts": { "max-size": "10m", "max-file": "3" }
+      }
+
+runcmd:
+  # DigitalOcean formats the volume (ext4) when it's created; mount it before Docker starts.
+  - mkdir -p ${data_mount}
+  - [sh, -c, "grep -q ' ${data_mount} ' /etc/fstab || echo '${volume_device} ${data_mount} ext4 defaults,nofail,discard 0 2' >> /etc/fstab"]
+  - mount -a
+  # Swap, so building the images doesn't run a 4 GB droplet out of memory.
+  - [sh, -c, "if [ ! -f /swapfile ]; then fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && echo '/swapfile none swap sw 0 0' >> /etc/fstab; fi; swapon -a"]
+  # Docker Engine and the Compose plugin, from Docker's apt repository.
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - [sh, -c, 'echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list']
+  - apt-get update
+  - [sh, -c, "DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"]
+  - systemctl enable --now docker
+  # The checkout and .env live on the volume too, so a replaced droplet finds them again.
+  - [sh, -c, "if [ ! -d ${app_dir}/.git ]; then git clone --branch ${repo_ref} ${repo_url} ${app_dir}; fi"]
+  - [sh, -c, "${app_dir}/deploy/init-env.sh ${app_host} ${auth_host}"]
