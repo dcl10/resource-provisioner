@@ -19,6 +19,7 @@ public static class ServiceCollectionExtensions
     services.AddValidatedOptions<SpacesOptions>(SpacesOptions.SectionName);
     services.AddValidatedOptions<CatalogOptions>(CatalogOptions.SectionName);
     services.AddValidatedOptions<WorkspacesOptions>(WorkspacesOptions.SectionName);
+    services.AddValidatedOptions<RunnerOptions>(RunnerOptions.SectionName);
     services.AddValidatedOptions<LimitsOptions>(LimitsOptions.SectionName);
 
     return services;

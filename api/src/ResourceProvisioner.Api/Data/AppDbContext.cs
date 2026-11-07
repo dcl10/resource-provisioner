@@ -18,6 +18,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
   /// </summary>
   public DbSet<RequestSensitiveOutputs> RequestSensitiveOutputs => Set<RequestSensitiveOutputs>();
 
+  /// <summary>The Terraform runner's log lines, per request.</summary>
+  public DbSet<JobLogLine> JobLogLines => Set<JobLogLine>();
+
   /// <inheritdoc />
   protected override void OnModelCreating(ModelBuilder modelBuilder)
   {
@@ -55,6 +58,16 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     {
       outputs.ToTable("RequestSensitiveOutputs");
       outputs.HasKey(x => x.RequestId);
+    });
+
+    modelBuilder.Entity<JobLogLine>(line =>
+    {
+      line.Property(x => x.Stream).HasConversion<string>().HasMaxLength(16);
+      line.HasIndex(x => new { x.RequestId, x.Id });
+      line.HasOne<ProvisioningRequest>()
+        .WithMany()
+        .HasForeignKey(x => x.RequestId)
+        .OnDelete(DeleteBehavior.Cascade);
     });
   }
 }

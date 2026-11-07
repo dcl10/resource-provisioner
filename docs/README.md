@@ -10,7 +10,7 @@ exist yet.
 | [auth-setup.md](auth-setup.md) | Local services, the Keycloak realm and clients, client secrets, how the web app and API handle sign-in, bootstrapping the first admin, the invite flow |
 | [catalog.md](catalog.md) | The `resource.json` manifest format, what the loader checks, variable validation, adding a resource type, the current types |
 | agent.md *(planned, #17)* | System prompt intent, agent tools, rate limits, model and effort config |
-| provisioning.md *(planned, #15, #16)* | The Terraform runner, workspaces and state, logs, destroy |
+| [provisioning.md](provisioning.md) | The Terraform runner, a job's steps, credentials, workspaces and state, the logs endpoint (destroy: #16) |
 | local-development.md *(planned, #20)* | Running the full stack locally, secrets, end-to-end checklist |
 | deployment.md *(planned, #21)* | Hosting on a droplet, Caddy, Keycloak production mode, SMTP, admin access |
 

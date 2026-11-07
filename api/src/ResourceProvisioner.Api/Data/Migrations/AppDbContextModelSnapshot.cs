@@ -62,6 +62,36 @@ namespace ResourceProvisioner.Api.Data.Migrations
                     b.ToTable("Invitations");
                 });
 
+            modelBuilder.Entity("ResourceProvisioner.Api.Models.JobLogLine", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTimeOffset>("At")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Stream")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RequestId", "Id");
+
+                    b.ToTable("JobLogLines");
+                });
+
             modelBuilder.Entity("ResourceProvisioner.Api.Models.ProvisioningRequest", b =>
                 {
                     b.Property<Guid>("Id")
@@ -128,6 +158,15 @@ namespace ResourceProvisioner.Api.Data.Migrations
                     b.HasKey("RequestId");
 
                     b.ToTable("RequestSensitiveOutputs", (string)null);
+                });
+
+            modelBuilder.Entity("ResourceProvisioner.Api.Models.JobLogLine", b =>
+                {
+                    b.HasOne("ResourceProvisioner.Api.Models.ProvisioningRequest", null)
+                        .WithMany()
+                        .HasForeignKey("RequestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("ResourceProvisioner.Api.Models.RequestSensitiveOutputs", b =>

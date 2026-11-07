@@ -1,5 +1,8 @@
 namespace ResourceProvisioner.Api.Controllers;
 
+using System.Net.ServerSentEvents;
+using System.Runtime.CompilerServices;
+using System.Text.Json;
 using Auth;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
@@ -14,11 +17,17 @@ using Services.Requests;
 /// longer valid at confirm.
 /// </summary>
 /// <param name="requests">The request service.</param>
+/// <param name="logs">The request log service.</param>
 /// <param name="currentUser">The signed-in user.</param>
 [ApiController]
 [Route("api/requests")]
-public class RequestsController(IProvisioningRequestService requests, ICurrentUser currentUser) : ControllerBase
+public class RequestsController(
+  IProvisioningRequestService requests,
+  IRequestLogService logs,
+  ICurrentUser currentUser) : ControllerBase
 {
+  private static readonly JsonSerializerOptions EventJson = new(JsonSerializerDefaults.Web);
+
   private RequestUser Caller => RequestUser.From(currentUser);
 
   /// <summary>Lists the user's requests, or every request for an admin, newest first.</summary>
@@ -54,6 +63,54 @@ public class RequestsController(IProvisioningRequestService requests, ICurrentUs
   [HttpPost("{id:guid}/cancel")]
   public Task<ActionResult<ProvisioningRequestResponse>> Cancel(Guid id, CancellationToken cancellationToken) =>
     Handle(() => requests.CancelAsync(id, Caller, cancellationToken));
+
+  /// <summary>
+  /// Streams the request's Terraform log as server-sent events: <c>status</c> (<c>{"status":"Applying"}</c>) first and
+  /// on every change, <c>log</c> (<c>{"id","at","stream","text"}</c>, with the line's ID as the event ID) for each line,
+  /// and a final <c>end</c> (<c>{"status"}</c>) once no job is queued or running. A reconnect with
+  /// <c>Last-Event-ID</c> resumes after that line. Owner or admin; 404 otherwise.
+  /// </summary>
+  /// <param name="id">Request ID.</param>
+  /// <param name="lastEventId">The last log line the client has, from the <c>Last-Event-ID</c> header.</param>
+  /// <param name="cancellationToken">Cancels the request; closing the connection stops the stream.</param>
+  /// <returns>The event stream, or a 404 problem.</returns>
+  [HttpGet("{id:guid}/logs")]
+  [Produces("text/event-stream")]
+  public async Task<IResult> Logs(
+    Guid id,
+    [FromHeader(Name = "Last-Event-ID")] string? lastEventId,
+    CancellationToken cancellationToken)
+  {
+    var afterId = long.TryParse(lastEventId, out var parsed) && parsed > 0 ? parsed : 0;
+    try
+    {
+      var events = await logs.FollowAsync(id, Caller, afterId, cancellationToken);
+      return TypedResults.ServerSentEvents(ToSse(events, cancellationToken));
+    }
+    catch (KeyNotFoundException ex)
+    {
+      return TypedResults.Problem(ex.Message, statusCode: StatusCodes.Status404NotFound);
+    }
+  }
+
+  private static async IAsyncEnumerable<SseItem<string>> ToSse(
+    IAsyncEnumerable<RequestLogEvent> events,
+    [EnumeratorCancellation] CancellationToken cancellationToken)
+  {
+    await foreach (var e in events.WithCancellation(cancellationToken))
+    {
+      yield return e.Kind switch
+      {
+        RequestLogEventKind.Log => new SseItem<string>(JsonSerializer.Serialize(e.Line, EventJson), "log")
+        {
+          EventId = e.Id?.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        },
+        RequestLogEventKind.Status => new SseItem<string>(
+          JsonSerializer.Serialize(new { status = e.Status }, EventJson), "status"),
+        _ => new SseItem<string>(JsonSerializer.Serialize(new { status = e.Status }, EventJson), "end"),
+      };
+    }
+  }
 
   /// <summary>Maps the service's exceptions to problem details.</summary>
   private async Task<ActionResult<T>> Handle<T>(Func<Task<T>> action)

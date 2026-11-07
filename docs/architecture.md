@@ -36,7 +36,8 @@ api/
 ├── Directory.Packages.props     # Central Package Management: every NuGet version lives here
 ├── .config/dotnet-tools.json    # dotnet-ef, pinned to the EF Core version
 ├── src/ResourceProvisioner.Api/
-│   ├── Program.cs               # host setup: options, auth, invitations, DbContext, catalog, controllers, /health
+│   ├── Program.cs               # host setup: options, auth, invitations, DbContext, catalog, requests, runner,
+│   │                            # controllers, /health
 │   ├── Auth/                    # roles, policies, realm roles mapping, ICurrentUser
 │   ├── Config/                  # typed options, one class per config section
 │   ├── Controllers/             # API controllers, one per resource (MeController: GET /api/me,
@@ -44,14 +45,17 @@ api/
 │   │                            # RequestsController: /api/requests)
 │   ├── Data/                    # AppDbContext, design-time factory, Migrations/
 │   ├── Extensions/              # service registration helpers
-│   ├── Models/                  # request and response types, the Invitation and ProvisioningRequest entities
+│   ├── Models/                  # request and response types, the Invitation, ProvisioningRequest and JobLogLine
+│   │                            # entities
 │   ├── ResourceCatalog/         # manifest types, loader and checks, ICatalogService (see catalog.md)
 │   └── Services/                # Keycloak/ (IKeycloakUserAdmin over the admin API), Invitations/ (see auth-setup.md),
-│                                # Requests/ (IProvisioningRequestService, the state machine, RunnerVariables)
+│                                # Requests/ (IProvisioningRequestService, the state machine, RunnerVariables, logs),
+│                                # Provisioning/ (the Terraform runner, see provisioning.md),
+│                                # Terraform/ (ITerraformProcessRunner, the only thing that starts the CLI)
 └── tests/ResourceProvisioner.Api.Tests/
-    └── Fixtures/                # ApiFactory (WebApplicationFactory on in-memory SQLite), TestAuthHandler,
+    └── Fixtures/                # ApiFactory (WebApplicationFactory on a temp SQLite file, runner off), TestAuthHandler,
                                  # TestAdminController (test-only admin endpoint), InMemoryKeycloakUserAdmin,
-                                 # TempCatalog, RequestSeeding (requests in any status),
+                                 # FakeTerraform, TempCatalog, RequestSeeding (requests in any status),
                                  # catalog/ (fixture resource types, not real modules)
 ```
 
@@ -90,6 +94,8 @@ use them check for them.
 | `Spaces:AccessId` / `Spaces:SecretKey` | none | yes |
 | `Catalog:Root` | `catalog` (looked for in the content root, then each folder above it; see [catalog.md](catalog.md#where-the-catalog-is)) | no |
 | `Workspaces:Root` | `workspaces` (relative to the working directory) | no |
+| `Runner:TerraformPath` | `terraform` (on `PATH`) | no |
+| `Runner:LogPollInterval` | `00:00:01` (how often the logs endpoint checks for new lines) | no |
 | `Limits:MaxActiveRequestsPerUser` | `3` | no |
 | `Limits:MaxActiveRequestsTotal` | `10` | no |
 | `Limits:ChatMessagesPerMinute` | `10` | no |
@@ -144,7 +150,7 @@ tag and the manifests' droplet-reference patterns use.
 | --- | --- | --- |
 | `AwaitingConfirmation` | Proposed; nothing has happened | the agent's `propose_request` tool (#17) |
 | `Queued` | Confirmed, waiting for the runner | the owner's Confirm (`POST /api/requests/{id}/confirm`) |
-| `Applying` | `terraform apply` is running | the runner (#15) |
+| `Applying` | `terraform apply` is running | the runner ([provisioning.md](provisioning.md)) |
 | `Succeeded` | The resource exists; outputs are stored | the runner |
 | `Failed` | Apply or destroy failed; resources may be left behind | the runner |
 | `Destroying` | `terraform destroy` is running | destroy (#16) |
@@ -165,14 +171,15 @@ by field path for the agent to fix. There is no HTTP endpoint for proposing: onl
 
 **Confirming** checks again, because time passes between propose and confirm: the variables and droplet references
 are re-validated (a referenced droplet may have been destroyed meanwhile; the API answers 422 with the errors), then
-the [spend caps](#spend-caps), then the request moves to `Queued`. Running Terraform is the runner's job (#15).
+the [spend caps](#spend-caps), then the request moves to `Queued` and onto the runner's queue. Running Terraform is the
+runner's job: see [provisioning.md](provisioning.md).
 
 **Outputs.** Non-sensitive outputs go in `ProvisioningRequests.Outputs`. Sensitive ones (`"sensitive": true` in the
 manifest: passwords, connection URIs) go in their own table, `RequestSensitiveOutputs`, keyed by request ID. The list
 and detail endpoints never load that table, and sensitive variables are left out of their `variables` too. An explicit,
 owner-only reveal is #19's job; it reads `RequestSensitiveOutputs` directly.
 
-**Runner variables.** `RunnerVariables.For(request)` gives the runner (#15) the variables it forces on every module:
+**Runner variables.** `RunnerVariables.For(request)` gives the runner the variables it forces on every module:
 `rp_name_suffix`, the request ID's first 8 hex digits, and `rp_tags`, which are `resource-provisioner`,
 `rp-<requestId>` and `rp-owner-<short-sub>` (the first 8 lowercase letters or digits of the owner's `sub`).
 
@@ -181,7 +188,7 @@ owner-only reveal is #19's job; it reads `RequestSensitiveOutputs` directly.
 | | Owner | Another user | Admin (`rp-admin`), someone else's request |
 | --- | --- | --- | --- |
 | `GET /api/requests` | their own | their own | every user's, with `ownerId` and `ownerEmail` |
-| `GET /api/requests/{id}` | 200 | 404 | 200 |
+| `GET /api/requests/{id}`, `GET .../logs` | 200 | 404 | 200 |
 | `POST .../confirm`, `POST .../cancel` | allowed | 404 | 403 |
 
 Admins can see everything but have no extra power over other users' cloud resources. A request someone can't see
