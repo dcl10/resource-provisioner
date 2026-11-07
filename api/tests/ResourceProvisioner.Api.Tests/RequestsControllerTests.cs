@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Models;
+using Services.Provisioning;
 using Xunit;
 
 /// <summary>A test host whose global active-request limit is high, so tests sharing it don't trip it.</summary>
@@ -133,6 +134,24 @@ public class RequestsControllerTests(HighLimitApiFactory factory) : IClassFixtur
     Assert.Equal(RequestStatus.Queued, body!.Status);
     Assert.NotNull(body.ConfirmedAt);
     Assert.Equal(RequestStatus.Queued, (await factory.FindRequestAsync(request.Id))!.Status);
+  }
+
+  [Fact]
+  public async Task Confirm_PutsRequestOnRunnerQueue()
+  {
+    var request = await factory.SeedRequestAsync(_userId, RequestStatus.AwaitingConfirmation);
+
+    await User.PostAsync($"{Route}/{request.Id}/confirm", null);
+
+    // The runner's background service is off in tests, so the queue holds every confirmed request in this class.
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    await foreach (var id in factory.Services.GetRequiredService<IJobDispatcher>().ReadAllAsync(cts.Token))
+    {
+      if (id == request.Id)
+      {
+        return;
+      }
+    }
   }
 
   [Theory]
