@@ -26,6 +26,13 @@ public class KeycloakOptions
   /// </summary>
   public string Secret { get; init; } = "";
 
+  /// <summary>
+  /// Whether Keycloak's discovery document must be fetched over HTTPS. Unset, it's required everywhere but in
+  /// Development. Set it to <c>false</c> when the API reaches Keycloak over a private network by plain HTTP, as in Docker
+  /// Compose (<c>http://keycloak:8080</c>), even though users reach Keycloak over HTTPS.
+  /// </summary>
+  public bool? RequireHttpsMetadata { get; init; }
+
   /// <summary>Issuer and OIDC discovery base, derived from <see cref="AuthServerUrl"/> and <see cref="Realm"/>.</summary>
   public string Authority => $"{AuthServerUrl.TrimEnd('/')}/realms/{Realm}";
 }
