@@ -5,8 +5,8 @@ using Models;
 
 /// <summary>
 /// Provisioning requests: proposing them (for the agent's <c>propose_request</c> tool), listing and reading them,
-/// and the owner's confirm and cancel. Users see only their own requests; admins see all of them but can act only on
-/// their own.
+/// the owner's confirm and cancel, and destroy. Users see only their own requests; admins see all of them, and can
+/// destroy any of them but confirm and cancel only their own.
 /// </summary>
 public interface IProvisioningRequestService
 {
@@ -72,6 +72,22 @@ public interface IProvisioningRequestService
   /// <exception cref="RequestForbiddenException">An admin cancelling someone else's request.</exception>
   /// <exception cref="RequestConflictException">It isn't awaiting confirmation, or changed meanwhile.</exception>
   Task<ProvisioningRequestResponse> CancelAsync(
+    Guid id,
+    RequestUser user,
+    CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Tears down what a request created: moves it to <see cref="RequestStatus.Destroying"/> and onto the runner's
+  /// queue. Allowed from <see cref="RequestStatus.Succeeded"/> and <see cref="RequestStatus.Failed"/>. The owner or
+  /// an admin may destroy it, so an admin can clean up a resource someone left running.
+  /// </summary>
+  /// <param name="id">Request ID.</param>
+  /// <param name="user">The signed-in user: the owner, or an admin.</param>
+  /// <param name="cancellationToken">Cancels the call.</param>
+  /// <returns>The updated request.</returns>
+  /// <exception cref="KeyNotFoundException">No such request the user can see.</exception>
+  /// <exception cref="RequestConflictException">It isn't Succeeded or Failed, or changed meanwhile.</exception>
+  Task<ProvisioningRequestResponse> DestroyAsync(
     Guid id,
     RequestUser user,
     CancellationToken cancellationToken = default);

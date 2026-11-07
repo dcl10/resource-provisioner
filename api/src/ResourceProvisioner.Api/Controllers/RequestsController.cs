@@ -10,8 +10,9 @@ using Models;
 using Services.Requests;
 
 /// <summary>
-/// Provisioning requests. Users see and act on their own; admins see everyone's (with the owner shown) but can
-/// confirm or cancel only their own. Requests are created by the agent's <c>propose_request</c> tool, not here.
+/// Provisioning requests. Users see and act on their own; admins see everyone's (with the owner shown) and can destroy
+/// any of them, but confirm or cancel only their own. Requests are created by the agent's <c>propose_request</c> tool,
+/// not here.
 /// Errors come back as problem details: 404 for a request the user can't see, 403 for an admin acting on someone
 /// else's, 409 for the wrong status or a limit reached, 422 (with <c>errors</c> by field) when the variables are no
 /// longer valid at confirm.
@@ -63,6 +64,18 @@ public class RequestsController(
   [HttpPost("{id:guid}/cancel")]
   public Task<ActionResult<ProvisioningRequestResponse>> Cancel(Guid id, CancellationToken cancellationToken) =>
     Handle(() => requests.CancelAsync(id, Caller, cancellationToken));
+
+  /// <summary>
+  /// Tears down what the request created: queues <c>terraform destroy</c> for the runner. Allowed from
+  /// <c>Succeeded</c> or <c>Failed</c>, by the owner or an admin; 409 from any other status. Follow it on
+  /// <c>GET .../logs</c>.
+  /// </summary>
+  /// <param name="id">Request ID.</param>
+  /// <param name="cancellationToken">Cancels the request.</param>
+  /// <returns>The request, now Destroying.</returns>
+  [HttpPost("{id:guid}/destroy")]
+  public Task<ActionResult<ProvisioningRequestResponse>> Destroy(Guid id, CancellationToken cancellationToken) =>
+    Handle(() => requests.DestroyAsync(id, Caller, cancellationToken));
 
   /// <summary>
   /// Streams the request's Terraform log as server-sent events: <c>status</c> (<c>{"status":"Applying"}</c>) first and

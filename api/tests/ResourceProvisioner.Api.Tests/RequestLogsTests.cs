@@ -1,5 +1,6 @@
 namespace ResourceProvisioner.Api.Tests;
 
+using System.Globalization;
 using System.Net;
 using System.Text.Json.Nodes;
 using Data;
@@ -54,7 +55,7 @@ public class RequestLogsTests(ApiFactory factory) : IClassFixture<ApiFactory>
     var events = Parse(await response.Content.ReadAsStringAsync());
     Assert.Equal(["status", "log", "log", "end"], events.Select(e => e.Type));
     Assert.Equal("Succeeded", events[0].Data["status"]!.GetValue<string>());
-    Assert.Equal(ids[1].ToString(), events[2].Id);
+    Assert.Equal(ids[1].ToString(CultureInfo.InvariantCulture), events[2].Id);
     Assert.Equal("Created.", events[2].Data["text"]!.GetValue<string>());
     Assert.Equal("Stdout", events[2].Data["stream"]!.GetValue<string>());
     Assert.Equal("Succeeded", events[3].Data["status"]!.GetValue<string>());
@@ -66,7 +67,7 @@ public class RequestLogsTests(ApiFactory factory) : IClassFixture<ApiFactory>
     var request = await factory.SeedRequestAsync(_userId, RequestStatus.Failed);
     var ids = await AddLines(request.Id, (LogSource.Stdout, "one"), (LogSource.Stdout, "two"));
     var client = User;
-    client.DefaultRequestHeaders.Add("Last-Event-ID", ids[0].ToString());
+    client.DefaultRequestHeaders.Add("Last-Event-ID", ids[0].ToString(CultureInfo.InvariantCulture));
 
     var events = Parse(await client.GetStringAsync($"/api/requests/{request.Id}/logs"));
 
