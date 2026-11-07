@@ -108,3 +108,17 @@ variable "rp_name_suffix" {
     error_message = "rp_name_suffix must be at most 8 lowercase letters or digits."
   }
 }
+
+# The request ID of one of the user's projects (from the request; the API checks it's theirs).
+# The module doesn't use it: the runner reads that project's id output and sets rp_project_id.
+variable "project_request_id" {
+  type    = string
+  default = null
+}
+
+# Set by the runner from project_request_id, not the request: the project's DigitalOcean ID, or
+# "" for the account's default project.
+variable "rp_project_id" {
+  type    = string
+  default = ""
+}
