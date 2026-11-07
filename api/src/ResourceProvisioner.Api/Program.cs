@@ -22,6 +22,9 @@ builder.Services.AddCatalog();
 // Provisioning requests: proposed by the agent, confirmed or cancelled by their owner, within the active limits.
 builder.Services.AddProvisioningRequests();
 
+// The Terraform runner: applies confirmed requests one at a time, each in its own workspace with its own state.
+builder.Services.AddTerraformRunner();
+
 builder.Services.AddControllers();
 builder.Services.AddHealthChecks();
 
