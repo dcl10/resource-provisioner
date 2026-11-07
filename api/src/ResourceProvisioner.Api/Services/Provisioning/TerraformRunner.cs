@@ -6,8 +6,9 @@ using Models;
 using Requests;
 
 /// <summary>
-/// The Terraform runner: takes request IDs off the <see cref="IJobDispatcher"/> and runs them one at a time, each in its own
-/// scope. When it starts it fails requests a previous run left mid-job and re-queues every <c>Queued</c> one.
+/// The Terraform runner: takes request IDs off the <see cref="IJobDispatcher"/> and runs them one at a time, each in
+/// its own scope. When it starts it fails requests a previous run left mid-apply and re-queues every <c>Queued</c> and
+/// <c>Destroying</c> one.
 /// </summary>
 /// <param name="queue">The job queue.</param>
 /// <param name="scopes">Creates a scope per job.</param>
@@ -19,12 +20,12 @@ public partial class TerraformRunner(
   TimeProvider time,
   ILogger<TerraformRunner> logger) : BackgroundService
 {
-  /// <summary>The log line added to a request the API stopped in the middle of.</summary>
+  /// <summary>The log line added to a request the API stopped in the middle of applying.</summary>
   public const string InterruptedMessage =
-    "Failed: the API stopped while this job was running, so the resource may be partly created or destroyed. " +
+    "Failed: the API stopped while this request was being applied, so the resource may be partly created. " +
     "Destroy the request to clean up.";
 
-  private static readonly RequestStatus[] RunningStatuses = [RequestStatus.Applying, RequestStatus.Destroying];
+  private static readonly RequestStatus[] PendingStatuses = [RequestStatus.Queued, RequestStatus.Destroying];
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -51,8 +52,9 @@ public partial class TerraformRunner(
   }
 
   /// <summary>
-  /// Fails requests left <c>Applying</c> or <c>Destroying</c> (no job runs across a restart), then re-queues the
-  /// <c>Queued</c> ones in the order they were confirmed.
+  /// Fails requests left <c>Applying</c> (no job runs across a restart, and a half-done apply isn't retried), then
+  /// re-queues the <c>Queued</c> and <c>Destroying</c> ones, oldest change first. A <c>Destroying</c> request may
+  /// have been waiting or half-done; either way running <c>terraform destroy</c> again is safe.
   /// </summary>
   private async Task RecoverAsync(CancellationToken cancellationToken)
   {
@@ -62,7 +64,7 @@ public partial class TerraformRunner(
       var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
       var interrupted = await db.ProvisioningRequests
-        .Where(x => RunningStatuses.Contains(x.Status))
+        .Where(x => x.Status == RequestStatus.Applying)
         .ToListAsync(cancellationToken);
       foreach (var request in interrupted)
       {
@@ -77,11 +79,11 @@ public partial class TerraformRunner(
       await db.SaveChangesAsync(cancellationToken);
 
       // SQLite (tests) can't order by DateTimeOffset, so sort in memory; active requests are capped, so this is small.
-      var queued = await db.ProvisioningRequests.AsNoTracking()
-        .Where(x => x.Status == RequestStatus.Queued)
-        .Select(x => new { x.Id, x.ConfirmedAt })
+      var pending = await db.ProvisioningRequests.AsNoTracking()
+        .Where(x => PendingStatuses.Contains(x.Status))
+        .Select(x => new { x.Id, x.UpdatedAt })
         .ToListAsync(cancellationToken);
-      foreach (var request in queued.OrderBy(x => x.ConfirmedAt))
+      foreach (var request in pending.OrderBy(x => x.UpdatedAt))
       {
         await queue.EnqueueAsync(request.Id, cancellationToken);
       }
