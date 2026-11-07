@@ -31,7 +31,7 @@ docker compose up -d
 
 The bootstrap admin comes from `KC_BOOTSTRAP_ADMIN_USERNAME` and `KC_BOOTSTRAP_ADMIN_PASSWORD`, which default to
 `admin` / `admin`. Set them in your shell or a root `.env` file to change them. All of these passwords are local-only
-defaults; the deployed setup (#21) uses its own.
+defaults; the deployed setup uses its own ([deployment.md](deployment.md)).
 
 The OIDC issuer is `http://localhost:8080/realms/resource-provisioner`. Keycloak runs with
 `KC_HOSTNAME=http://localhost:8080` and `KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`, so the issuer stays the same when the
@@ -40,7 +40,10 @@ app itself runs in Compose and reaches Keycloak at `keycloak:8080` ([local-devel
 ## What the realm import creates
 
 On its first start, Keycloak imports [keycloak/realm-export.json](../keycloak/realm-export.json) (`start-dev
---import-realm`). It creates the realm `resource-provisioner` with:
+--import-realm`). The app's URL and the SMTP settings in it are placeholders with local defaults
+(`${APP_URL:http://localhost:3000}`, `${SMTP_HOST:mailhog}`...), which Keycloak fills from its environment at import,
+so the deployed realm gets the production values ([deployment.md](deployment.md#what-runs-on-the-host)). It creates
+the realm `resource-provisioner` with:
 
 **Realm settings**
 

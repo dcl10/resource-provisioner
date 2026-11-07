@@ -187,7 +187,7 @@ bad manifest fails CI rather than a deploy.
 
 `Catalog:Root` (default `catalog`). An absolute path is used as-is. A relative path is looked for in the content root
 (the project folder under `dotnet run`) and then each folder above it, so the default finds the repo's `catalog/`
-wherever in the repo the API starts. Deployments (#21) set it explicitly. Tests point it at the fixture catalog in
+wherever in the repo the API starts. The API image sets it to `/app/catalog`. Tests point it at the fixture catalog in
 `api/tests/ResourceProvisioner.Api.Tests/Fixtures/catalog/` (`test-server`, `test-firewall`, `test-database`), which
 covers every variable type, a droplet reference and an `atLeastOneOf` rule, and isn't a real module.
 

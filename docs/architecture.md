@@ -22,7 +22,8 @@ web (Next.js + Auth.js) ──Bearer JWT (via /api/proxy)──▶ api (ASP.NET 
 | `api/` | Auth and policies, invitations, catalog, the Claude agent, provisioning requests and the Terraform runner. |
 | `catalog/<type>/` | `main.tf`, `variables.tf`, `outputs.tf` and a `resource.json` manifest for each supported resource type. |
 | `keycloak/` | `realm-export.json` for the `resource-provisioner` realm, imported on first start. |
-| `infra/` | Terraform for the droplet that hosts the POC, with its own state, separate from the catalog. |
+| `infra/` | Terraform for the droplet that hosts the POC, with its own state, separate from the catalog ([deployment.md](deployment.md)). |
+| `deploy/` | The host's Caddyfile and scripts (`init-env.sh`, `deploy.sh`, `keycloak-admin.sh`), used with `docker-compose.prod.yml`. |
 | `workspaces/<requestId>/` | A per-request copy of the module, its tfvars and its state. Runtime only, gitignored. |
 
 ## API layout

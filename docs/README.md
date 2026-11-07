@@ -12,6 +12,6 @@ exist yet.
 | [agent.md](agent.md) | How a message is answered, the system prompt's intent, the four tools and their strict schemas, the conversation endpoints and events, stored history, refusals and errors, the rate limit, model and effort config |
 | [provisioning.md](provisioning.md) | The Terraform runner, applying and destroying, credentials, workspaces and state, the logs endpoint |
 | [local-development.md](local-development.md) | Running the dependencies or the whole app with Docker Compose, settings, volumes, how containers reach Keycloak, the images and Terraform pin, the end-to-end checklist |
-| deployment.md *(planned, #21)* | Hosting on a droplet, Caddy, Keycloak production mode, SMTP, admin access |
+| [deployment.md](deployment.md) | Hosting on a droplet: what `infra/` creates, the production stack (Caddy, Keycloak in production mode), first deployment, updates, admin access through an SSH tunnel, data and backups, tearing down |
 
 When you add a doc, replace its *(planned)* entry with a link.
