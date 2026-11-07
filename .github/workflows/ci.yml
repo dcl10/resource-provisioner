@@ -76,8 +76,8 @@ jobs:
       - name: install Terraform
         uses: hashicorp/setup-terraform@v4
         with:
-          # TODO(#20): pin to the version baked into the API image.
-          terraform_version: latest
+          # The version baked into the API image (TERRAFORM_VERSION in api/Dockerfile); change both together.
+          terraform_version: 1.17.1
 
       - name: check formatting
         run: terraform fmt -check -recursive -diff catalog infra
