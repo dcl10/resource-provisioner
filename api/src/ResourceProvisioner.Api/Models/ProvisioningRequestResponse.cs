@@ -18,6 +18,8 @@ using System.Text.Json.Nodes;
 /// <param name="CreatedAt">When it was proposed.</param>
 /// <param name="UpdatedAt">When its status last changed.</param>
 /// <param name="ConfirmedAt">When the owner confirmed it, if they have.</param>
+/// <param name="DependsOn">The requests it references, which are provisioned before it.</param>
+/// <param name="Dependents">The requests that reference it, which must be destroyed before it.</param>
 public record ProvisioningRequestResponse(
   Guid Id,
   string OwnerId,
@@ -30,4 +32,6 @@ public record ProvisioningRequestResponse(
   Guid? ConversationId,
   DateTimeOffset CreatedAt,
   DateTimeOffset UpdatedAt,
-  DateTimeOffset? ConfirmedAt);
+  DateTimeOffset? ConfirmedAt,
+  IReadOnlyList<RequestLink> DependsOn,
+  IReadOnlyList<RequestLink> Dependents);

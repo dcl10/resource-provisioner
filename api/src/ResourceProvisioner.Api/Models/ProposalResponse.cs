@@ -9,12 +9,17 @@ namespace ResourceProvisioner.Api.Models;
 /// <param name="DisplayName">The resource type's display name.</param>
 /// <param name="CostHint">The type's rough cost.</param>
 /// <param name="Items">The variables with defaults applied, in manifest order.</param>
+/// <param name="DependsOn">
+/// The requests it references, provisioned before it, as they were when it was proposed. Null on proposals stored
+/// before dependencies existed.
+/// </param>
 public record ProposalResponse(
   Guid RequestId,
   string Type,
   string DisplayName,
   string CostHint,
-  IReadOnlyList<ProposalItem> Items);
+  IReadOnlyList<ProposalItem> Items,
+  IReadOnlyList<RequestLink>? DependsOn = null);
 
 /// <summary>One variable on the confirmation card.</summary>
 /// <param name="Name">The variable name.</param>

@@ -1,4 +1,5 @@
 import { API_BASE, ApiError, apiFetch, readApiError } from "@/lib/api";
+import type { RequestLink } from "@/lib/requests";
 import { SseParser } from "@/lib/sse";
 
 /** The longest message the API accepts, in characters. */
@@ -29,6 +30,8 @@ export interface Proposal {
   displayName: string;
   costHint: string;
   items: ProposalItem[];
+  /** The requests it references, provisioned before it, as they were when it was proposed. */
+  dependsOn?: RequestLink[] | null;
 }
 
 /** A message as the chat shows it. */

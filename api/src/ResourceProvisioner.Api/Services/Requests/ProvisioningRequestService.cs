@@ -11,7 +11,8 @@ using ResourceCatalog;
 
 /// <summary>
 /// <see cref="IProvisioningRequestService"/> on the app database. Validation comes from the catalog's manifests plus
-/// the checks a manifest can't express: that droplet references name the owner's own provisioned droplets.
+/// the checks a manifest can't express: that references name the owner's own requests of the right type, which are
+/// recorded as dependencies so they're provisioned first and destroyed last.
 /// </summary>
 /// <param name="db">The app database.</param>
 /// <param name="catalog">The resource catalog.</param>
@@ -25,11 +26,36 @@ public class ProvisioningRequestService(
   IJobDispatcher jobs,
   TimeProvider time) : IProvisioningRequestService
 {
-  /// <summary>The catalog type a droplet reference must point at.</summary>
-  public const string DropletType = "droplet";
+  /// <summary>The most requests one confirm-all can take.</summary>
+  public const int MaxConfirmAtOnce = 20;
 
-  // Counting active requests and queueing one must not interleave, or two confirms could both pass the limit. The
-  // POC runs one API instance, so a process-wide lock is enough.
+  /// <summary>
+  /// Statuses a referenced request may be in: pending (it will be provisioned first) or provisioned. Failed,
+  /// cancelled and destroyed requests, and ones being destroyed, can't be built on.
+  /// </summary>
+  public static readonly IReadOnlyList<RequestStatus> ReferenceableStatuses =
+  [
+    RequestStatus.AwaitingConfirmation,
+    RequestStatus.Queued,
+    RequestStatus.Applying,
+    RequestStatus.Succeeded,
+  ];
+
+  /// <summary>
+  /// Statuses of a dependent that stop its dependency being destroyed: it exists, may exist (a failed apply), or is
+  /// about to.
+  /// </summary>
+  public static readonly IReadOnlyList<RequestStatus> BlockingDependentStatuses =
+  [
+    RequestStatus.Queued,
+    RequestStatus.Applying,
+    RequestStatus.Succeeded,
+    RequestStatus.Failed,
+    RequestStatus.Destroying,
+  ];
+
+  // Counting active requests and queueing must not interleave, or two confirms could both pass the limit. The POC
+  // runs one API instance, so a process-wide lock is enough.
   private static readonly SemaphoreSlim ConfirmLock = new(1, 1);
 
   private readonly LimitsOptions _limits = limits.Value;
@@ -42,7 +68,7 @@ public class ProvisioningRequestService(
     Guid? conversationId,
     CancellationToken cancellationToken = default)
   {
-    var (values, errors) = await ValidateAsync(owner.UserId, type, variables, cancellationToken);
+    var (values, errors, dependsOn) = await ValidateAsync(owner.UserId, type, variables, cancellationToken);
     if (errors.Count > 0)
     {
       return new ProposeResult(null, errors);
@@ -63,9 +89,13 @@ public class ProvisioningRequestService(
     };
 
     db.ProvisioningRequests.Add(request);
+    db.RequestDependencies.AddRange(dependsOn.Select(id => new RequestDependency
+    {
+      RequestId = request.Id, DependsOnId = id,
+    }));
     await db.SaveChangesAsync(cancellationToken);
 
-    return new ProposeResult(ToResponse(request), errors);
+    return new ProposeResult((await ToResponses([request], cancellationToken))[0], errors);
   }
 
   /// <inheritdoc />
@@ -81,7 +111,7 @@ public class ProvisioningRequestService(
 
     // SQLite (tests) can't order by DateTimeOffset, so sort in memory; active requests are capped, so lists are small.
     var requests = await query.ToListAsync(cancellationToken);
-    return [.. requests.OrderByDescending(x => x.CreatedAt).Select(ToResponse)];
+    return await ToResponses([.. requests.OrderByDescending(x => x.CreatedAt)], cancellationToken);
   }
 
   /// <inheritdoc />
@@ -89,43 +119,79 @@ public class ProvisioningRequestService(
     Guid id,
     RequestUser user,
     CancellationToken cancellationToken = default) =>
-    ToResponse(await FindVisible(id, user, cancellationToken));
+    (await ToResponses([await FindVisible(id, user, cancellationToken)], cancellationToken))[0];
 
   /// <inheritdoc />
   public async Task<ProvisioningRequestResponse> ConfirmAsync(
     Guid id,
     RequestUser user,
+    CancellationToken cancellationToken = default) =>
+    (await ConfirmManyAsync([id], user, cancellationToken))[0];
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<ProvisioningRequestResponse>> ConfirmManyAsync(
+    IReadOnlyList<Guid> ids,
+    RequestUser user,
     CancellationToken cancellationToken = default)
   {
-    var request = await FindOwn(id, user, "confirm", cancellationToken);
-    EnsureCanMove(request, RequestStatus.Queued, "confirmed");
-
-    // The catalog may have changed since it was proposed, and a referenced droplet may have been destroyed.
-    var (_, errors) = await ValidateAsync(
-      request.OwnerId,
-      request.Type,
-      JsonNode.Parse(request.Variables)?.AsObject(),
-      cancellationToken);
-    if (errors.Count > 0)
+    var distinct = ids.Distinct().ToList();
+    if (distinct.Count is 0 or > MaxConfirmAtOnce)
     {
-      throw new RequestValidationException(errors);
+      throw new RequestConflictException($"Confirm between 1 and {MaxConfirmAtOnce} requests at once.");
     }
+
+    var requests = new List<ProvisioningRequest>();
+    foreach (var id in distinct)
+    {
+      var request = await FindOwn(id, user, "confirm", cancellationToken);
+      EnsureCanMove(request, RequestStatus.Queued, "confirmed");
+      requests.Add(request);
+    }
+
+    // The catalog may have changed since they were proposed, and a referenced request may have been cancelled or
+    // destroyed. With several requests, each error's path starts with its request ID.
+    foreach (var request in requests)
+    {
+      var (_, errors, _) = await ValidateAsync(
+        request.OwnerId,
+        request.Type,
+        JsonNode.Parse(request.Variables)?.AsObject(),
+        cancellationToken);
+      if (errors.Count > 0)
+      {
+        throw new RequestValidationException(requests.Count == 1
+          ? errors
+          : errors.ToDictionary(e => $"{request.Id}.{e.Key}", e => e.Value));
+      }
+    }
+
+    var ordered = await InDependencyOrder(requests, cancellationToken);
 
     await ConfirmLock.WaitAsync(cancellationToken);
     try
     {
-      await EnforceLimits(request.OwnerId, cancellationToken);
-      RequestStateMachine.Move(request, RequestStatus.Queued, time.GetUtcNow());
-      await Save(request, cancellationToken);
+      await EnforceLimits(user.UserId, ordered.Count, cancellationToken);
+      var now = time.GetUtcNow();
+      foreach (var request in ordered)
+      {
+        RequestStateMachine.Move(request, RequestStatus.Queued, now);
+      }
+
+      await Save(cancellationToken);
     }
     finally
     {
       ConfirmLock.Release();
     }
 
-    // Saved first, so if the API stops before the runner gets to it, the runner re-queues it at startup.
-    await jobs.EnqueueAsync(request.Id, cancellationToken);
-    return ToResponse(request);
+    // Saved first, so if the API stops before the runner gets to them, the runner re-queues them at startup.
+    foreach (var request in ordered)
+    {
+      await jobs.EnqueueAsync(request.Id, cancellationToken);
+    }
+
+    var responses = await ToResponses(ordered, cancellationToken);
+    return [.. distinct.Select(id => responses.Single(r => r.Id == id))];
   }
 
   /// <inheritdoc />
@@ -138,9 +204,9 @@ public class ProvisioningRequestService(
     EnsureCanMove(request, RequestStatus.Cancelled, "cancelled");
 
     RequestStateMachine.Move(request, RequestStatus.Cancelled, time.GetUtcNow());
-    await Save(request, cancellationToken);
+    await Save(cancellationToken);
 
-    return ToResponse(request);
+    return (await ToResponses([request], cancellationToken))[0];
   }
 
   /// <inheritdoc />
@@ -171,19 +237,33 @@ public class ProvisioningRequestService(
     var request = await FindVisible(id, user, cancellationToken);
     EnsureCanMove(request, RequestStatus.Destroying, "destroyed");
 
+    var dependentIds = await db.RequestDependencies.AsNoTracking()
+      .Where(d => d.DependsOnId == request.Id)
+      .Select(d => d.RequestId)
+      .ToListAsync(cancellationToken);
+    var blocking = await db.ProvisioningRequests.AsNoTracking()
+      .Where(x => dependentIds.Contains(x.Id) && BlockingDependentStatuses.Contains(x.Status))
+      .ToListAsync(cancellationToken);
+    if (blocking.Count > 0)
+    {
+      throw new RequestConflictException(
+        "Destroy what depends on it first: " +
+        $"{string.Join(", ", blocking.Select(b => RequestLinks.Describe(RequestLinks.For(b, catalog))))}.");
+    }
+
     RequestStateMachine.Move(request, RequestStatus.Destroying, time.GetUtcNow());
-    await Save(request, cancellationToken);
+    await Save(cancellationToken);
 
     // Saved first: if the API stops before the runner gets to it, the runner re-queues it at startup.
     await jobs.EnqueueAsync(request.Id, cancellationToken);
-    return ToResponse(request);
+    return (await ToResponses([request], cancellationToken))[0];
   }
 
   /// <summary>
-  /// The manifest's checks, then the droplet references in the values that passed them. Returns the values with
-  /// defaults applied and every error by field path.
+  /// The manifest's checks, then the references in the values that passed them. Returns the values with defaults
+  /// applied, every error by field path, and the requests referenced.
   /// </summary>
-  private async Task<(JsonObject Values, Dictionary<string, string[]> Errors)> ValidateAsync(
+  private async Task<(JsonObject Values, Dictionary<string, string[]> Errors, List<Guid> DependsOn)> ValidateAsync(
     string ownerId,
     string type,
     JsonObject? variables,
@@ -191,90 +271,152 @@ public class ProvisioningRequestService(
   {
     var result = catalog.ValidateVariables(type, variables);
     var errors = result.Errors.ToDictionary(e => e.Key, e => e.Value);
+    var dependsOn = new List<Guid>();
 
     if (catalog.Find(type) is { } manifest)
     {
-      foreach (var (path, message) in await CheckDropletReferences(manifest, result, ownerId, cancellationToken))
+      var (problems, referenced) = await CheckReferences(manifest, result, ownerId, cancellationToken);
+      foreach (var (path, message) in problems)
       {
         errors[path] = [.. errors.GetValueOrDefault(path, []), message];
       }
+
+      dependsOn.AddRange(referenced);
     }
 
-    return (result.Values, errors);
+    return (result.Values, errors, dependsOn);
   }
 
   /// <summary>
-  /// Every ID in a droplet-reference variable (<c>droplet_request_ids</c>, <c>*_droplet_request_ids</c>) must be a
-  /// <c>droplet</c> request the owner owns that has succeeded. Someone else's request and a missing one get the same
-  /// message, so the check doesn't reveal other users' request IDs.
+  /// Every request ID in a variable with <c>references</c> must be one of the owner's own requests of that type,
+  /// pending or provisioned (<see cref="ReferenceableStatuses"/>), admins included. Someone else's request and a
+  /// missing one get the same message, so the check doesn't reveal other users' request IDs.
   /// </summary>
-  private async Task<List<(string Path, string Message)>> CheckDropletReferences(
+  private async Task<(List<(string Path, string Message)> Problems, List<Guid> Referenced)> CheckReferences(
     ResourceManifest manifest,
     VariableValidationResult result,
     string ownerId,
     CancellationToken cancellationToken)
   {
-    var references = new List<(string Path, string Value)>();
-    foreach (var variable in manifest.Variables.Where(v => ManifestChecker.IsDropletReference(v.Name)))
+    var references = new List<(string Path, string Value, string Type)>();
+    foreach (var variable in manifest.Variables.Where(v => v.References is not null))
     {
       // A variable with its own errors (wrong shape, bad pattern) is already reported.
-      if (result.Errors.Keys.Any(k => k == variable.Name || k.StartsWith($"{variable.Name}[", StringComparison.Ordinal)) ||
-          result.Values[variable.Name] is not JsonArray items)
+      if (result.Errors.Keys.Any(k =>
+            k == variable.Name || k.StartsWith($"{variable.Name}[", StringComparison.Ordinal)))
       {
         continue;
       }
 
-      for (var i = 0; i < items.Count; i++)
+      switch (result.Values[variable.Name])
       {
-        references.Add(($"{variable.Name}[{i}]", items[i]?.GetValue<string>() ?? ""));
+        case JsonArray items:
+          for (var i = 0; i < items.Count; i++)
+          {
+            references.Add(($"{variable.Name}[{i}]", items[i]?.GetValue<string>() ?? "", variable.References!));
+          }
+
+          break;
+        case JsonValue value when value.TryGetValue<string>(out var single) && single.Length > 0:
+          references.Add((variable.Name, single, variable.References!));
+          break;
       }
     }
 
     if (references.Count == 0)
     {
-      return [];
+      return ([], []);
     }
 
     var ids = references.Select(r => Guid.TryParse(r.Value, out var id) ? id : Guid.Empty).Distinct().ToList();
-    var droplets = await db.ProvisioningRequests.AsNoTracking()
-      .Where(x => ids.Contains(x.Id) && x.OwnerId == ownerId && x.Type == DropletType)
-      .ToDictionaryAsync(x => x.Id, x => x.Status, cancellationToken);
+    var found = await db.ProvisioningRequests.AsNoTracking()
+      .Where(x => ids.Contains(x.Id) && x.OwnerId == ownerId)
+      .ToDictionaryAsync(x => x.Id, x => new { x.Type, x.Status }, cancellationToken);
 
     var problems = new List<(string Path, string Message)>();
-    foreach (var (path, value) in references)
+    var referenced = new List<Guid>();
+    foreach (var (path, value, type) in references)
     {
-      if (!Guid.TryParse(value, out var id) || !droplets.TryGetValue(id, out var status))
+      var displayName = catalog.Find(type)?.DisplayName ?? type;
+      if (!Guid.TryParse(value, out var id) || !found.TryGetValue(id, out var target) || target.Type != type)
       {
-        problems.Add((path, $"'{value}' isn't the request ID of one of your droplets."));
+        problems.Add((path, $"'{value}' isn't the request ID of one of your {displayName} requests."));
       }
-      else if (status != RequestStatus.Succeeded)
+      else if (!ReferenceableStatuses.Contains(target.Status))
       {
-        problems.Add((path,
-          $"Droplet request {value} is {status}; only provisioned (Succeeded) droplets can be referenced."));
+        problems.Add((path, $"{displayName} request {value} is {target.Status}; " +
+                            "only pending or provisioned requests can be referenced."));
+      }
+      else if (!referenced.Contains(id))
+      {
+        referenced.Add(id);
       }
     }
 
-    return problems;
+    return (problems, referenced);
   }
 
-  private async Task EnforceLimits(string ownerId, CancellationToken cancellationToken)
+  /// <summary>
+  /// Orders requests so each comes after the ones in the set it depends on (oldest first among equals), and refuses
+  /// if one depends on a request still awaiting confirmation outside the set.
+  /// </summary>
+  private async Task<List<ProvisioningRequest>> InDependencyOrder(
+    List<ProvisioningRequest> requests,
+    CancellationToken cancellationToken)
+  {
+    var inSet = requests.Select(r => r.Id).ToHashSet();
+    var dependencies = await db.RequestDependencies.AsNoTracking()
+      .Where(d => inSet.Contains(d.RequestId))
+      .ToListAsync(cancellationToken);
+
+    var outsideIds = dependencies.Select(d => d.DependsOnId).Where(id => !inSet.Contains(id)).Distinct().ToList();
+    var unconfirmed = await db.ProvisioningRequests.AsNoTracking()
+      .Where(x => outsideIds.Contains(x.Id) && x.Status == RequestStatus.AwaitingConfirmation)
+      .ToListAsync(cancellationToken);
+    if (unconfirmed.Count > 0)
+    {
+      throw new RequestConflictException(
+        $"Confirm {string.Join(", ", unconfirmed.Select(u => RequestLinks.Describe(RequestLinks.For(u, catalog))))} " +
+        "first, or together with this: it's provisioned before it.");
+    }
+
+    var ordered = new List<ProvisioningRequest>();
+    var remaining = requests.OrderBy(r => r.CreatedAt).ThenBy(r => r.Id).ToList();
+    while (remaining.Count > 0)
+    {
+      // References only point at earlier requests, so there's always one with nothing left to wait for.
+      var next = remaining.First(r => dependencies
+        .Where(d => d.RequestId == r.Id && inSet.Contains(d.DependsOnId))
+        .All(d => ordered.Any(o => o.Id == d.DependsOnId)));
+      ordered.Add(next);
+      remaining.Remove(next);
+    }
+
+    return ordered;
+  }
+
+  private async Task EnforceLimits(string ownerId, int adding, CancellationToken cancellationToken)
   {
     var active = db.ProvisioningRequests.Where(x => RequestStateMachine.ActiveStatuses.Contains(x.Status));
 
     var mine = await active.CountAsync(x => x.OwnerId == ownerId, cancellationToken);
-    if (mine >= _limits.MaxActiveRequestsPerUser)
+    if (mine + adding > _limits.MaxActiveRequestsPerUser)
     {
-      throw new RequestLimitException(
-        $"You already have {mine} active requests, and each user can have at most " +
-        $"{_limits.MaxActiveRequestsPerUser}. Destroy one before confirming another.");
+      throw new RequestLimitException(adding == 1
+        ? $"You already have {mine} active requests, and each user can have at most " +
+          $"{_limits.MaxActiveRequestsPerUser}. Destroy one before confirming another."
+        : $"You have {mine} active requests; confirming these {adding} would make {mine + adding}, over the " +
+          $"limit of {_limits.MaxActiveRequestsPerUser} per user. Destroy something first, or confirm fewer.");
     }
 
     var total = await active.CountAsync(cancellationToken);
-    if (total >= _limits.MaxActiveRequestsTotal)
+    if (total + adding > _limits.MaxActiveRequestsTotal)
     {
-      throw new RequestLimitException(
-        $"The app already has {total} active requests across all users, its limit of " +
-        $"{_limits.MaxActiveRequestsTotal}. Try again once some have been destroyed.");
+      throw new RequestLimitException(adding == 1
+        ? $"The app already has {total} active requests across all users, its limit of " +
+          $"{_limits.MaxActiveRequestsTotal}. Try again once some have been destroyed."
+        : $"The app has {total} active requests across all users; confirming these {adding} would go over its " +
+          $"limit of {_limits.MaxActiveRequestsTotal}. Try again once some have been destroyed, or confirm fewer.");
     }
   }
 
@@ -286,7 +428,7 @@ public class ProvisioningRequestService(
     }
   }
 
-  private async Task Save(ProvisioningRequest request, CancellationToken cancellationToken)
+  private async Task Save(CancellationToken cancellationToken)
   {
     try
     {
@@ -294,8 +436,7 @@ public class ProvisioningRequestService(
     }
     catch (DbUpdateConcurrencyException)
     {
-      throw new RequestConflictException(
-        $"Request {request.Id} changed while this was being done. Reload it and try again.");
+      throw new RequestConflictException("A request changed while this was being done. Reload it and try again.");
     }
   }
 
@@ -321,7 +462,34 @@ public class ProvisioningRequestService(
       : throw new RequestForbiddenException($"Only the request's owner can {action} it.");
   }
 
-  private ProvisioningRequestResponse ToResponse(ProvisioningRequest x)
+  /// <summary>Responses for requests, with what each depends on and what depends on it.</summary>
+  private async Task<List<ProvisioningRequestResponse>> ToResponses(
+    IReadOnlyList<ProvisioningRequest> requests,
+    CancellationToken cancellationToken)
+  {
+    var ids = requests.Select(r => r.Id).ToList();
+    var dependencies = await db.RequestDependencies.AsNoTracking()
+      .Where(d => ids.Contains(d.RequestId) || ids.Contains(d.DependsOnId))
+      .ToListAsync(cancellationToken);
+
+    // Prefer the given requests, whose status may have just changed, over a fresh read.
+    var linkedIds = dependencies.SelectMany(d => new[] { d.RequestId, d.DependsOnId }).Except(ids).Distinct().ToList();
+    var linked = (await db.ProvisioningRequests.AsNoTracking()
+        .Where(x => linkedIds.Contains(x.Id))
+        .ToListAsync(cancellationToken))
+      .Concat(requests)
+      .ToDictionary(x => x.Id, x => RequestLinks.For(x, catalog));
+
+    return [.. requests.Select(r => ToResponse(
+      r,
+      [.. dependencies.Where(d => d.RequestId == r.Id).Select(d => linked[d.DependsOnId])],
+      [.. dependencies.Where(d => d.DependsOnId == r.Id).Select(d => linked[d.RequestId])]))];
+  }
+
+  private ProvisioningRequestResponse ToResponse(
+    ProvisioningRequest x,
+    IReadOnlyList<RequestLink> dependsOn,
+    IReadOnlyList<RequestLink> dependents)
   {
     var manifest = catalog.Find(x.Type);
 
@@ -344,6 +512,8 @@ public class ProvisioningRequestService(
       x.ConversationId,
       x.CreatedAt,
       x.UpdatedAt,
-      x.ConfirmedAt);
+      x.ConfirmedAt,
+      dependsOn,
+      dependents);
   }
 }

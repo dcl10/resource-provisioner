@@ -91,6 +91,18 @@ public static class CatalogLoader
       }
     }
 
+    // References point at other types, so they can only be checked once every manifest is read.
+    var ids = entries.Select(e => e.Manifest.Id).ToHashSet(StringComparer.Ordinal);
+    foreach (var entry in entries)
+    {
+      var unknown = entry.Manifest.Variables.Where(v => v.References is not null && !ids.Contains(v.References));
+      foreach (var variable in unknown)
+      {
+        problems.Add($"{Path.Combine(entry.ModuleDirectory, ManifestFileName)}:{Environment.NewLine}" +
+                     $"  - {variable.Name}: references '{variable.References}', which isn't a type in the catalog.");
+      }
+    }
+
     if (problems.Count > 0)
     {
       throw new CatalogException(

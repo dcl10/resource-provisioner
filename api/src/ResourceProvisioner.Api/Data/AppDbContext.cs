@@ -21,6 +21,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
   /// <summary>The Terraform runner's log lines, per request.</summary>
   public DbSet<JobLogLine> JobLogLines => Set<JobLogLine>();
 
+  /// <summary>Which requests depend on which, from their reference variables.</summary>
+  public DbSet<RequestDependency> RequestDependencies => Set<RequestDependency>();
+
   /// <summary>Chats with the agent.</summary>
   public DbSet<Conversation> Conversations => Set<Conversation>();
 
@@ -64,6 +67,20 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     {
       outputs.ToTable("RequestSensitiveOutputs");
       outputs.HasKey(x => x.RequestId);
+    });
+
+    modelBuilder.Entity<RequestDependency>(dependency =>
+    {
+      dependency.HasKey(x => new { x.RequestId, x.DependsOnId });
+      dependency.HasIndex(x => x.DependsOnId);
+      dependency.HasOne<ProvisioningRequest>()
+        .WithMany()
+        .HasForeignKey(x => x.RequestId)
+        .OnDelete(DeleteBehavior.Cascade);
+      dependency.HasOne<ProvisioningRequest>()
+        .WithMany()
+        .HasForeignKey(x => x.DependsOnId)
+        .OnDelete(DeleteBehavior.Restrict);
     });
 
     modelBuilder.Entity<Conversation>(conversation =>

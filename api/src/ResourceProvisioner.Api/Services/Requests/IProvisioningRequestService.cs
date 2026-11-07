@@ -13,8 +13,8 @@ public interface IProvisioningRequestService
   /// <summary>
   /// Validates a request and, if it's valid, creates it in <see cref="RequestStatus.AwaitingConfirmation"/>. Checks
   /// the variables against the type's manifest (including its <c>atLeastOneOf</c> rules), and that every ID in a
-  /// droplet-reference variable is a <c>droplet</c> request <paramref name="owner"/> owns that has
-  /// <see cref="RequestStatus.Succeeded"/>, admins included. Nothing is provisioned.
+  /// variable with <c>references</c> is a request of that type <paramref name="owner"/> owns, pending or provisioned,
+  /// admins included. Those are recorded as its dependencies. Nothing is provisioned.
   /// </summary>
   /// <param name="owner">The user the request is for; becomes its owner.</param>
   /// <param name="type">The resource type's ID.</param>
@@ -46,8 +46,9 @@ public interface IProvisioningRequestService
   Task<ProvisioningRequestResponse> GetAsync(Guid id, RequestUser user, CancellationToken cancellationToken = default);
 
   /// <summary>
-  /// The owner's confirm: re-checks the variables and droplet references, enforces the active-request limits, and
-  /// moves the request to <see cref="RequestStatus.Queued"/> for the runner.
+  /// The owner's confirm: re-checks the variables and references, enforces the active-request limits, and moves the
+  /// request to <see cref="RequestStatus.Queued"/> for the runner. Refused while a request it depends on still awaits
+  /// confirmation.
   /// </summary>
   /// <param name="id">Request ID.</param>
   /// <param name="user">The signed-in user; must be the owner.</param>
@@ -60,6 +61,28 @@ public interface IProvisioningRequestService
   /// <exception cref="RequestLimitException">Confirming would go over a limit.</exception>
   Task<ProvisioningRequestResponse> ConfirmAsync(
     Guid id,
+    RequestUser user,
+    CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Confirms several requests at once (the chat's Confirm all): each must be the user's own and awaiting
+  /// confirmation, and still valid. The active-request limits are checked for the whole set, and they're queued in
+  /// dependency order, all or none. A request that depends on another still awaiting confirmation can only be
+  /// confirmed together with it.
+  /// </summary>
+  /// <param name="ids">Request IDs, at most <c>ProvisioningRequestService.MaxConfirmAtOnce</c>.</param>
+  /// <param name="user">The signed-in user; must own every request.</param>
+  /// <param name="cancellationToken">Cancels the call.</param>
+  /// <returns>The updated requests, in the order given.</returns>
+  /// <exception cref="KeyNotFoundException">A request the user can't see.</exception>
+  /// <exception cref="RequestForbiddenException">An admin confirming someone else's request.</exception>
+  /// <exception cref="RequestConflictException">
+  /// One isn't awaiting confirmation, changed meanwhile, or depends on an unconfirmed request outside the set.
+  /// </exception>
+  /// <exception cref="RequestValidationException">One's variables or references are no longer valid.</exception>
+  /// <exception cref="RequestLimitException">Confirming them would go over a limit.</exception>
+  Task<IReadOnlyList<ProvisioningRequestResponse>> ConfirmManyAsync(
+    IReadOnlyList<Guid> ids,
     RequestUser user,
     CancellationToken cancellationToken = default);
 
@@ -101,7 +124,9 @@ public interface IProvisioningRequestService
   /// <param name="cancellationToken">Cancels the call.</param>
   /// <returns>The updated request.</returns>
   /// <exception cref="KeyNotFoundException">No such request the user can see.</exception>
-  /// <exception cref="RequestConflictException">It isn't Succeeded or Failed, or changed meanwhile.</exception>
+  /// <exception cref="RequestConflictException">
+  /// It isn't Succeeded or Failed, changed meanwhile, or other requests that depend on it still exist (or may).
+  /// </exception>
   Task<ProvisioningRequestResponse> DestroyAsync(
     Guid id,
     RequestUser user,

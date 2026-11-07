@@ -27,6 +27,8 @@ export function testRequest(
     createdAt: "2026-11-07T10:00:00Z",
     updatedAt: "2026-11-07T10:00:00Z",
     confirmedAt: "2026-11-07T10:01:00Z",
+    dependsOn: [],
+    dependents: [],
     ...overrides,
   };
 }

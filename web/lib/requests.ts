@@ -12,6 +12,16 @@ export type RequestStatus =
   | "Destroyed"
   | "Cancelled";
 
+/** A short reference to another request: one a request depends on, or one that depends on it. */
+export interface RequestLink {
+  id: string;
+  type: string;
+  displayName: string;
+  /** The resource's `name` variable, if it has one. */
+  name: string | null;
+  status: RequestStatus;
+}
+
 /** A provisioning request as `GET /api/requests/{id}` returns it. Never holds secrets. Dates are ISO 8601. */
 export interface ProvisioningRequest {
   id: string;
@@ -26,6 +36,10 @@ export interface ProvisioningRequest {
   createdAt: string;
   updatedAt: string;
   confirmedAt: string | null;
+  /** The requests it references, which are provisioned before it. */
+  dependsOn: RequestLink[];
+  /** The requests that reference it, which must be destroyed before it. */
+  dependents: RequestLink[];
 }
 
 /** Statuses in which the runner has a job queued or running, so the request will change by itself. */
@@ -52,6 +66,48 @@ export function isInProgress(status: RequestStatus): boolean {
  */
 export function canDestroy(status: RequestStatus): boolean {
   return status === "Succeeded" || status === "Failed";
+}
+
+/** Statuses of a dependent that stop what it depends on being destroyed: it exists, may exist, or is about to. */
+export const blockingDependentStatuses: readonly RequestStatus[] = [
+  "Queued",
+  "Applying",
+  "Succeeded",
+  "Failed",
+  "Destroying",
+];
+
+/**
+ * The requests that must be destroyed before this one can be.
+ * @param request - the request
+ * @returns its dependents that exist, may exist, or are about to
+ */
+export function blockingDependents(
+  request: ProvisioningRequest,
+): RequestLink[] {
+  return request.dependents.filter((d) =>
+    blockingDependentStatuses.includes(d.status),
+  );
+}
+
+/**
+ * The requests a queued request is waiting for: what it depends on that hasn't been provisioned yet.
+ * @param request - the request
+ * @returns the dependencies still to succeed; empty unless it's queued
+ */
+export function waitingFor(request: ProvisioningRequest): RequestLink[] {
+  return request.status === "Queued"
+    ? request.dependsOn.filter((d) => d.status !== "Succeeded")
+    : [];
+}
+
+/**
+ * How the UI names a linked request: its type and, if it has one, its name.
+ * @param link - the request
+ * @returns such as `Droplet web-1`
+ */
+export function linkLabel(link: RequestLink): string {
+  return link.name ? `${link.displayName} ${link.name}` : link.displayName;
 }
 
 /**
@@ -115,6 +171,20 @@ export function confirmRequest(id: string): Promise<ProvisioningRequest> {
     `/requests/${encodeURIComponent(id)}/confirm`,
     { method: "POST" },
   );
+}
+
+/**
+ * Confirms several proposed requests at once, all or none: the spend limits are checked for the whole set, and they're
+ * provisioned in dependency order.
+ * @param ids - the request IDs
+ * @returns the requests, now Queued, in the order given
+ */
+export function confirmRequests(ids: string[]): Promise<ProvisioningRequest[]> {
+  return apiFetch<ProvisioningRequest[]>("/requests/confirm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ requestIds: ids }),
+  });
 }
 
 /**

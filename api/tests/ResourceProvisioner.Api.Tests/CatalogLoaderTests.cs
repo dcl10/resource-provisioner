@@ -330,20 +330,39 @@ public sealed class CatalogLoaderTests : IDisposable
   }
 
   [Theory]
-  [InlineData("""{ "name": "v_droplet_request_ids", "type": "string", "description": "d" }""",
-    "v_droplet_request_ids", "a droplet reference must be an array of strings")]
-  [InlineData("""{ "name": "droplet_request_ids", "type": "array", "description": "d", "items": { "type": "integer" } }""",
-    "droplet_request_ids", "a droplet reference must be an array of strings")]
+  [InlineData("""{ "name": "v", "type": "integer", "description": "d", "references": "sample" }""",
+    "a reference must be a string or an array of strings")]
+  [InlineData("""
+    { "name": "v", "type": "array", "description": "d", "references": "sample", "items": { "type": "integer" } }
+    """,
+    "a reference must be a string or an array of strings")]
   [InlineData("""
     { "name": "v", "type": "array", "description": "d",
       "items": { "type": "object", "properties": [
-        { "name": "droplet_request_ids", "type": "array", "description": "d", "items": { "type": "string" } }] } }
-    """, "v", "droplet references (droplet_request_ids) must be top-level variables")]
-  public void Load_Throws_WhenDropletReferenceIsNotTopLevelArrayOfStrings(string variable, string tfName, string expected)
+        { "name": "w", "type": "string", "description": "d", "references": "sample" }] } }
+    """, "references (w) must be top-level variables")]
+  [InlineData("""{ "name": "v", "type": "string", "description": "d", "references": "Not_An_Id" }""",
+    "references 'Not_An_Id', which isn't a type ID")]
+  [InlineData("""{ "name": "v", "type": "string", "description": "d", "references": "nope" }""",
+    "references 'nope', which isn't a type in the catalog")]
+  public void Load_Throws_WhenReferenceIsInvalid(string variable, string expected)
   {
-    _catalog.AddTypeWithVariable(variable, tfName);
+    _catalog.AddTypeWithVariable(variable);
 
     AssertLoadFails(expected);
+  }
+
+  [Theory]
+  [InlineData("""{ "name": "v", "type": "string", "description": "d", "references": "sample" }""")]
+  [InlineData("""
+    { "name": "v", "type": "array", "description": "d", "references": "sample", "items": { "type": "string" } }
+    """)]
+  public void Load_Accepts_StringAndStringArrayReferences(string variable)
+  {
+    _catalog.AddTypeWithVariable(variable);
+
+    var entry = Assert.Single(CatalogLoader.Load(_catalog.Root));
+    Assert.Equal("sample", Assert.Single(entry.Manifest.Variables).References);
   }
 
   [Fact]

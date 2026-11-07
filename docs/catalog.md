@@ -115,17 +115,19 @@ creates; a request that sets `rp_tags` is rejected as an unknown field.
 **Provider credentials** never appear as variables. A module declares an empty `provider` block, and the runner passes
 the token in the environment (`DIGITALOCEAN_TOKEN` for the `digitalocean/digitalocean` provider).
 
-**Referencing the user's own droplets** (a firewall's targets, a database's trusted sources): never take a tag, name
-or DigitalOcean ID. Take an array of droplet **request IDs** (`items.pattern` a lowercase GUID, `maxItems` the
-provider's limit), named `droplet_request_ids` or `<purpose>_droplet_request_ids`, and have the module turn each into
-its `rp-<requestId>` tag. The manifest can only check the shape, so:
+**Referencing the user's own resources** (a firewall's target droplets, a database's trusted droplets): never take a
+tag, name or DigitalOcean ID. Take **request IDs**, and mark the variable with `"references": "<type>"`, the type it
+points at, such as `"references": "droplet"`. It must be a top-level string, or array of strings (`items.pattern` a
+lowercase GUID, `maxItems` the provider's limit), and the module turns each ID into what it needs, such as its
+`rp-<requestId>` tag. The manifest can only check the shape, so:
 
-- The API, at `propose_request` and again at confirm, rejects the request unless every ID is a `droplet` request
-  owned by the requesting user (admins included) and `Succeeded`. See
-  [architecture.md](architecture.md#ownership). It finds these variables by name, so the loader requires them to be
-  top-level arrays of strings.
-- The agent's `list_my_resources` returns the request ID and type of the user's own resources only, admins included
-  (see [agent.md](agent.md#tools)).
+- The loader checks the referenced type exists in the catalog.
+- The API, at `propose_request` and again at confirm, rejects the request unless every ID is a request of that type
+  owned by the requesting user (admins included) that is pending or provisioned. Each one becomes a **dependency**:
+  it's provisioned first, and can't be destroyed while the dependent may exist. See
+  [architecture.md](architecture.md#dependencies).
+- The agent's tool schema says which type a reference takes, and that pending requests are fine; `list_my_resources`
+  returns the request ID and type of the user's own resources only, admins included (see [agent.md](agent.md#tools)).
 
 A free-form tag would let a user name another user's `rp-<requestId>` or the shared `resource-provisioner` tag. Request
 IDs are never reused, so a tag can't later match someone else's droplet.
@@ -174,8 +176,8 @@ invalid, listing every problem in every manifest. Hidden folders (`.terraform/`)
 - every default passes its own variable's constraints
 - each `atLeastOneOf` group names at least two distinct top-level variables that exist and are neither required (the
   rule would always hold) nor sensitive (the agent can't set them)
-- variables named `droplet_request_ids` or `*_droplet_request_ids` are top-level arrays of strings, so the ownership
-  check can find and read them
+- a variable with `references` is a top-level string or array of strings, isn't sensitive, and names a type ID that
+  exists in the catalog, so the ownership check and the dependencies can read it
 - every manifest variable is declared in `variables.tf`, the outputs match `outputs.tf` exactly, and `sensitive`
   agrees on both sides. This reads `terraform fmt`-formatted files (top-level blocks close with `}` in column 0); it
   is not a full HCL parser.
@@ -203,8 +205,8 @@ and returns:
   validation problem details. An unknown type is reported on `type`, an unknown name as `Unknown field.`
 
 A `null` value counts as not given. Every error is collected, not just the first, so the agent can fix them in one go.
-The manifest's [`atLeastOneOf`](#rules-across-variables) rules are checked here too. Whether droplet references
-belong to the user needs the database, so `IProvisioningRequestService` checks that on top.
+The manifest's [`atLeastOneOf`](#rules-across-variables) rules are checked here too. Whether references
+point at the user's own requests needs the database, so `IProvisioningRequestService` checks that on top.
 
 `GET /api/catalog` returns every type with its variables and outputs, in the manifest's own shape. Like every
 endpoint, it requires sign-in.
@@ -272,7 +274,8 @@ No API or agent code changes.
 ### Cloud Firewall
 
 - **Targets:** `droplet_request_ids`, 1 to 5, as in
-  [Referencing the user's own droplets](#variables); the firewall applies to droplets with those `rp-<requestId>` tags.
+  [Referencing the user's own resources](#variables) (`"references": "droplet"`); the firewall applies to droplets with
+  those `rp-<requestId>` tags.
   Five is DigitalOcean's tag limit per firewall
   ([limits](https://docs.digitalocean.com/products/networking/firewalls/details/limits/)). Ownership is checked by #14,
   not here.
@@ -311,9 +314,9 @@ No API or agent code changes.
 - **Restricted access, never open:** a `digitalocean_database_firewall` (trusted sources) always has at least one
   rule, and the cluster is unreachable from anywhere else
   ([trusted sources](https://docs.digitalocean.com/products/databases/postgresql/how-to/secure/)). Sources:
-  - `allowed_droplet_request_ids`: up to 10 of the user's own droplets, as in
-    [Referencing the user's own droplets](#variables); each becomes a `tag` rule on `rp-<requestId>`. Ownership is
-    checked by #14, not here.
+  - `allowed_droplet_request_ids`: up to 10 of the user's own droplets (`"references": "droplet"`), as in
+    [Referencing the user's own resources](#variables); each becomes a `tag` rule on `rp-<requestId>`. Ownership is
+    checked by the API, not here.
   - `allowed_ip_addresses`: up to 10 IPv4 CIDRs, `/8` to `/32`. DigitalOcean's trusted sources don't take IPv6.
     Prefixes shorter than `/8` are refused, so with 10 entries at most 10/256 of IPv4 space can be listed and
     `0.0.0.0/0` can't.

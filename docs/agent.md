@@ -45,6 +45,9 @@ stuck calling tools can't run up a bill.
 - Read the type's spec before discussing settings, and trust it over general DigitalOcean knowledge.
 - Ask only for what's missing or ambiguous, one or two questions at a time; use defaults and mention them.
 - Reference the user's existing droplets by request ID, via `list_my_resources`.
+- For resources that build on each other (a droplet and a firewall on it), propose them in one reply, the one needed
+  first, referencing it by the `requestId` the first `propose_request` returned. The app provisions them in order, and
+  the user can confirm them all at once.
 - Call `propose_request` once everything is agreed, fix any errors it returns, then tell the user to review the card
   and click Confirm, with the cost hint. Never say something has been created.
 - Never ask for or repeat secrets.
@@ -60,7 +63,7 @@ Claude's tool inputs always match the schema. The schema mapping and its size li
 | `list_resource_types` | none | `[{type, displayName, description, costHint}]` for every type |
 | `get_resource_spec` | `type` (enum of the catalog's IDs) | The type's manifest without its sensitive variables: every variable's rules, `atLeastOneOf`, outputs |
 | `list_my_resources` | none | The user's own requests that aren't Cancelled or Destroyed: request ID, type, status, variables and non-sensitive outputs. Only the user's own, **admins included**: the agent acts for the user. |
-| `propose_request` | `type` (enum) and `variables` (`anyOf` the types' variable objects) | Calls `IProvisioningRequestService.ProposeAsync` as the user, recording the conversation ID. Invalid: `is_error` with `{"errors": {field path: [messages]}}`, for Claude to fix. Valid: `{"proposal": ..., "next": ...}`, and the browser gets a `proposal` event. |
+| `propose_request` | `type` (enum) and `variables` (`anyOf` the types' variable objects) | Calls `IProvisioningRequestService.ProposeAsync` as the user, recording the conversation ID. Invalid: `is_error` with `{"errors": {field path: [messages]}}`, for Claude to fix. Valid: `{"proposal": ..., "next": ...}`, and the browser gets a `proposal` event. A reference variable's description says which type it takes, and that pending requests (such as one proposed earlier in the reply) are fine. |
 
 A tool that throws returns a generic `is_error` result (details go to the API's log), so the loop carries on.
 
@@ -94,7 +97,7 @@ Body `{"text": "..."}` (1 to 4,000 characters; 400 otherwise). The response is s
 | Event | `data` | When |
 | --- | --- | --- |
 | `text` | `{"text": "..."}` | each piece of the reply, as Claude writes it (Markdown) |
-| `proposal` | `{"requestId", "type", "displayName", "costHint", "items": [{"name", "label", "value"}]}` | each request `propose_request` created, for the confirmation card; items follow the manifest's order and labels, without sensitive variables |
+| `proposal` | `{"requestId", "type", "displayName", "costHint", "items": [{"name", "label", "value"}], "dependsOn": [{"id", "type", "displayName", "name", "status"}]}` | each request `propose_request` created, for the confirmation card; items follow the manifest's order and labels, without sensitive variables; `dependsOn` lists what it references |
 | `done` | `{}` | the reply is complete; the stream closes |
 | `error` | `{"error": "..."}` | the reply stopped early, with a message for the user; the stream closes |
 

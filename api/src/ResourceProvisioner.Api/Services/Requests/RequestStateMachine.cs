@@ -24,7 +24,8 @@ public static class RequestStateMachine
   private static readonly Dictionary<RequestStatus, RequestStatus[]> Transitions = new()
   {
     [RequestStatus.AwaitingConfirmation] = [RequestStatus.Queued, RequestStatus.Cancelled],
-    [RequestStatus.Queued] = [RequestStatus.Applying],
+    // Queued -> Failed is the runner's, when something the request depends on failed or went away before it ran.
+    [RequestStatus.Queued] = [RequestStatus.Applying, RequestStatus.Failed],
     [RequestStatus.Applying] = [RequestStatus.Succeeded, RequestStatus.Failed],
     [RequestStatus.Succeeded] = [RequestStatus.Destroying],
 

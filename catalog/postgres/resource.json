@@ -58,6 +58,7 @@
     },
     {
       "name": "allowed_droplet_request_ids",
+      "references": "droplet",
       "label": "Allowed droplets",
       "type": "array",
       "description": "The request IDs of the user's own droplets that may connect, up to 10, taken from list_my_resources (a lowercase GUID such as 3f2b8c1e-5d4a-4e6f-9a7b-1c2d3e4f5a6b). Only droplets the user requested and that are provisioned are accepted. Never use a droplet name, a DigitalOcean droplet ID or a tag. Give at least one droplet here or one address in allowed_ip_addresses: with neither, the request fails. An app on a droplet must have that droplet listed here to reach the database.",

@@ -138,6 +138,7 @@ When deployed they come from environment variables (`Anthropic__ApiKey` and so o
 
 ```
 AwaitingConfirmation → Queued → Applying → Succeeded | Failed
+Queued               → Failed                (the runner: something it depends on won't succeed)
 Succeeded | Failed   → Destroying → Destroyed | Failed
 AwaitingConfirmation → Cancelled
 ```
@@ -151,10 +152,10 @@ tag and the manifests' droplet-reference patterns use.
 | Status | Meaning | Moved there by |
 | --- | --- | --- |
 | `AwaitingConfirmation` | Proposed; nothing has happened | the agent's `propose_request` tool ([agent.md](agent.md)) |
-| `Queued` | Confirmed, waiting for the runner | the owner's Confirm (`POST /api/requests/{id}/confirm`) |
+| `Queued` | Confirmed, waiting for the runner (and for anything it depends on) | the owner's Confirm (`POST /api/requests/{id}/confirm`, or several at once with `POST /api/requests/confirm`) |
 | `Applying` | `terraform apply` is running | the runner ([provisioning.md](provisioning.md)) |
 | `Succeeded` | The resource exists; outputs are stored | the runner |
-| `Failed` | Apply or destroy failed; resources may be left behind | the runner |
+| `Failed` | Apply or destroy failed, so resources may be left behind; or a request it depended on failed or went away, so it never ran | the runner |
 | `Destroying` | Waiting for, or running, `terraform destroy` | the owner's or an admin's destroy (`POST /api/requests/{id}/destroy`) |
 | `Destroyed` | Nothing is left | the runner |
 | `Cancelled` | The owner cancelled before confirming; nothing was created | the owner (`POST /api/requests/{id}/cancel`) |
@@ -168,12 +169,16 @@ cancel, or the runner), the second fails with 409 instead of overwriting the fir
 **Proposing.** `IProvisioningRequestService.ProposeAsync(owner, type, variables, conversationId)` is what
 `propose_request` calls. It validates the variables with `ICatalogService.ValidateVariables` (which includes the
 manifest's `atLeastOneOf` rules, see [catalog.md](catalog.md#rules-across-variables)), then checks every
-droplet reference (see [below](#ownership)), and creates the request in `AwaitingConfirmation`, or returns the errors
-by field path for the agent to fix. There is no HTTP endpoint for proposing: only the agent creates requests.
+reference (see [below](#dependencies)), and creates the request in `AwaitingConfirmation` with its dependencies, or
+returns the errors by field path for the agent to fix. There is no HTTP endpoint for proposing: only the agent creates requests.
 
-**Confirming** checks again, because time passes between propose and confirm: the variables and droplet references
-are re-validated (a referenced droplet may have been destroyed meanwhile; the API answers 422 with the errors), then
-the [spend caps](#spend-caps), then the request moves to `Queued` and onto the runner's queue. Running Terraform is the
+**Confirming** checks again, because time passes between propose and confirm: the variables and references are
+re-validated (a referenced request may have been cancelled or destroyed meanwhile; the API answers 422 with the
+errors), then the [spend caps](#spend-caps), then the request moves to `Queued` and onto the runner's queue. A request
+that depends on one still awaiting confirmation can't be confirmed on its own (409 naming it). **Confirm all**
+(`POST /api/requests/confirm`, `{"requestIds": [...]}`, up to 20) confirms a set together: every one is checked, the
+spend caps are checked for the whole set, and they're queued in dependency order, all or none; with several, each
+422 error's path starts with its request ID. Running Terraform is the
 runner's job: see [provisioning.md](provisioning.md).
 
 **Outputs.** Non-sensitive outputs go in `ProvisioningRequests.Outputs`. Sensitive ones (`"sensitive": true` in the
@@ -193,7 +198,7 @@ clicks **Reveal secrets**.
 | --- | --- | --- | --- |
 | `GET /api/requests` | their own | their own | every user's, with `ownerId` and `ownerEmail` |
 | `GET /api/requests/{id}`, `GET .../logs` | 200 | 404 | 200 |
-| `POST .../confirm`, `POST .../cancel` | allowed | 404 | 403 |
+| `POST .../confirm`, `POST .../cancel`, `POST /api/requests/confirm` | allowed | 404 | 403 |
 | `POST .../destroy` | allowed | 404 | allowed |
 | `GET .../sensitive-outputs` | allowed | 404 | 403 |
 
@@ -201,15 +206,31 @@ Admins can see everything, and their one extra power over other users' cloud res
 can destroy a resource someone left running, but can't create, confirm or reference anything in their name. A request
 someone can't see answers 404, so its existence isn't revealed.
 
-**Droplet references.** A variable named `droplet_request_ids` or `<purpose>_droplet_request_ids` (see
-[catalog.md](catalog.md#variables)) lists droplets by request ID. At propose and again at confirm, every ID must be a
-`droplet` request **owned by the requesting user** that is `Succeeded`, admins included. A missing ID and another
-user's ID get the same error, so the check doesn't reveal other users' request IDs; the user's own droplet that isn't
-provisioned yet gets an error naming its status.
+### Dependencies
+
+A variable marked `"references": "<type>"` in its manifest (see [catalog.md](catalog.md#variables)) holds request IDs
+of that type, such as a firewall's `droplet_request_ids`. At propose and again at confirm, every ID must be a request
+of that type **owned by the requesting user**, admins included, that is pending (`AwaitingConfirmation`, `Queued`,
+`Applying`) or `Succeeded`. A missing ID and another user's ID get the same error, so the check doesn't reveal other
+users' request IDs; the user's own request that's failed, cancelled, being destroyed or destroyed gets an error naming
+its status.
+
+Each referenced request becomes a **dependency** (`RequestDependencies`: request → the request it depends on). A
+request only references earlier ones, so there are no cycles. Dependencies mean:
+
+- **Provisioned in order.** A queued request waits until everything it depends on has `Succeeded`; the runner queues
+  it again whenever one of them finishes. If one fails, is cancelled, or is being or has been destroyed, it moves
+  `Queued → Failed` without running ([provisioning.md](provisioning.md#dependencies)).
+- **Confirmed in order.** See **Confirming** above.
+- **Destroyed in reverse.** A request can't be destroyed (409, naming them) while something that depends on it is
+  `Queued`, `Applying`, `Succeeded`, `Failed` (it may have created something) or `Destroying`.
+- **Shown both ways.** Every request response has `dependsOn` and `dependents`: `{id, type, displayName, name,
+  status}` for each.
 
 ## Spend caps
 
-Checked when the owner confirms, inside one lock so two confirms can't both take the last slot (the POC runs one API
+Checked when the owner confirms (for every request in a Confirm all together), inside one lock so two confirms can't
+both take the last slot (the POC runs one API
 instance; several would need a database lock instead).
 
 | Key | Default | What it caps |

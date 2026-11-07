@@ -38,6 +38,7 @@ public partial class TerraformRunner(
       {
         using var scope = scopes.CreateScope();
         await scope.ServiceProvider.GetRequiredService<ITerraformJobProcessor>().RunAsync(requestId, stoppingToken);
+        await RequeueDependents(scope.ServiceProvider.GetRequiredService<AppDbContext>(), requestId, stoppingToken);
       }
       catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
       {
@@ -48,6 +49,26 @@ public partial class TerraformRunner(
         // One bad job mustn't stop the runner.
         LogJobFailed(logger, ex, requestId);
       }
+    }
+  }
+
+  /// <summary>
+  /// Queues the queued requests that depend on one whose job just ended, so they run once it has succeeded, or fail
+  /// if it didn't. Duplicates in the queue are harmless.
+  /// </summary>
+  private async Task RequeueDependents(AppDbContext db, Guid requestId, CancellationToken cancellationToken)
+  {
+    var dependentIds = await db.RequestDependencies.AsNoTracking()
+      .Where(d => d.DependsOnId == requestId)
+      .Select(d => d.RequestId)
+      .ToListAsync(cancellationToken);
+    var waiting = await db.ProvisioningRequests.AsNoTracking()
+      .Where(x => dependentIds.Contains(x.Id) && x.Status == RequestStatus.Queued)
+      .Select(x => x.Id)
+      .ToListAsync(cancellationToken);
+    foreach (var id in waiting)
+    {
+      await queue.EnqueueAsync(id, cancellationToken);
     }
   }
 

@@ -150,6 +150,96 @@ describe("RequestDetail", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("lists what it depends on and what depends on it", async () => {
+    mockApi(
+      testRequest("Succeeded", {
+        dependents: [
+          {
+            id: "req-2",
+            type: "firewall",
+            displayName: "Cloud firewall",
+            name: "web-fw",
+            status: "Succeeded",
+          },
+        ],
+      }),
+    );
+    renderDetail();
+
+    expect(await screen.findByText("Needed by")).toBeInTheDocument();
+    expect(
+      screen.getAllByRole("link", { name: "Cloud firewall web-fw" })[0],
+    ).toHaveAttribute("href", "/requests/req-2");
+  });
+
+  it("replaces Destroy with what to destroy first while something depends on it", async () => {
+    mockApi(
+      testRequest("Succeeded", {
+        dependents: [
+          {
+            id: "req-2",
+            type: "firewall",
+            displayName: "Cloud firewall",
+            name: "web-fw",
+            status: "Succeeded",
+          },
+        ],
+      }),
+    );
+    renderDetail();
+
+    expect(
+      await screen.findByText(/To destroy this, first destroy/),
+    ).toHaveTextContent(
+      "first destroy Cloud firewall web-fw, which depends on it.",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Destroy" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers Destroy once what depended on it is gone", async () => {
+    mockApi(
+      testRequest("Succeeded", {
+        dependents: [
+          {
+            id: "req-2",
+            type: "firewall",
+            displayName: "Cloud firewall",
+            name: "web-fw",
+            status: "Destroyed",
+          },
+        ],
+      }),
+    );
+    renderDetail();
+
+    expect(
+      await screen.findByRole("button", { name: "Destroy" }),
+    ).toBeInTheDocument();
+  });
+
+  it("says what a queued request is waiting for", async () => {
+    mockApi(
+      testRequest("Queued", {
+        dependsOn: [
+          {
+            id: "req-0",
+            type: "droplet",
+            displayName: "Droplet",
+            name: "web-1",
+            status: "Applying",
+          },
+        ],
+      }),
+    );
+    renderDetail();
+
+    expect(await screen.findByText(/Waiting for/)).toHaveTextContent(
+      "Waiting for Droplet web-1 to be provisioned first.",
+    );
+  });
+
   it("explains a request that doesn't exist", async () => {
     vi.stubGlobal("fetch", async () =>
       jsonResponse({ detail: "Request req-1 doesn't exist." }, 404),

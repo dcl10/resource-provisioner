@@ -54,6 +54,10 @@ public class FakeChatModel : IChatModel
     Reply([.. events]);
   }
 
+  /// <summary>Scripts a reply built from the request it answers, such as a tool call using an earlier result.</summary>
+  /// <param name="reply">Builds the events from the request.</param>
+  public void ReplyWith(Func<ChatModelRequest, IReadOnlyList<ChatModelEvent>> reply) => _replies.Enqueue(reply);
+
   /// <summary>Scripts a reply made of exactly these events.</summary>
   /// <param name="events">The events.</param>
   public void Reply(params ChatModelEvent[] events) => _replies.Enqueue(_ => events);

@@ -35,6 +35,8 @@ function request(status: RequestStatus): ProvisioningRequest {
     createdAt: "2026-11-07T10:00:00Z",
     updatedAt: "2026-11-07T10:00:00Z",
     confirmedAt: null,
+    dependsOn: [],
+    dependents: [],
   };
 }
 
@@ -121,6 +123,34 @@ describe("ProposalCard", () => {
     expect(
       await within(card).findByText("Awaiting confirmation"),
     ).toBeInTheDocument();
+  });
+
+  it("says what it runs after, with links", async () => {
+    mockApi("AwaitingConfirmation");
+    render(
+      <Providers>
+        <ProposalCard
+          proposal={{
+            ...proposal,
+            dependsOn: [
+              {
+                id: "req-0",
+                type: "droplet",
+                displayName: "Droplet",
+                name: "web-1",
+                status: "AwaitingConfirmation",
+              },
+            ],
+          }}
+        />
+      </Providers>,
+    );
+
+    expect(screen.getByText("Runs after:")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Droplet web-1" })).toHaveAttribute(
+      "href",
+      "/requests/req-0",
+    );
   });
 
   it("confirms the request, then shows a toast and a link to it", async () => {

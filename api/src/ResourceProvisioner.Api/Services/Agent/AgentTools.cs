@@ -62,7 +62,9 @@ public static class AgentTools
         "invalid it returns the errors by field, so fix them (asking the user if needed) and call it again. If " +
         "they're valid it creates the request, awaiting confirmation: nothing is created in DigitalOcean until the " +
         "user clicks Confirm on the card the app shows them. Call it once every required variable is known and the " +
-        "user has agreed to the choices; leave out variables to take their defaults.",
+        "user has agreed to the choices; leave out variables to take their defaults. For resources that build on " +
+        "each other (a droplet and a firewall on it), propose the one needed first, then reference it by the " +
+        "requestId this tool returned: the app provisions them in that order.",
         Object(
         [
           ("type", new JsonObject
@@ -89,7 +91,20 @@ public static class AgentTools
   }
 
   private static JsonObject PropertiesSchema(IEnumerable<VariableSpec> variables) =>
-    Object([.. variables.Select(v => (v.Name, ValueSchema(v, v.Default), v.Required))]);
+    Object([.. variables.Select(v => (v.Name, WithReference(ValueSchema(v, v.Default), v), v.Required))]);
+
+  /// <summary>Tells the agent which requests a reference variable takes, pending ones included.</summary>
+  private static JsonObject WithReference(JsonObject schema, VariableSpec variable)
+  {
+    if (variable.References is { } type)
+    {
+      var note = $"Request IDs of the user's own {type} requests, from {ListMyResources} or an earlier " +
+                 $"{ProposeRequest} in this conversation; pending ones are fine, as they're provisioned first.";
+      schema["description"] = schema["description"] is { } existing ? $"{existing} {note}" : note;
+    }
+
+    return schema;
+  }
 
   private static JsonObject ValueSchema(ValueSpec spec, JsonNode? defaultValue)
   {

@@ -21,7 +21,13 @@ public static class Proposals
       .Select(v => new ProposalItem(v.Name, v.Label ?? v.Name, Display(request.Variables[v.Name])))
       .ToList();
 
-    return new ProposalResponse(request.Id, manifest.Id, manifest.DisplayName, manifest.CostHint, items);
+    return new ProposalResponse(
+      request.Id,
+      manifest.Id,
+      manifest.DisplayName,
+      manifest.CostHint,
+      items,
+      request.DependsOn);
   }
 
   private static string Display(JsonNode? value) =>
