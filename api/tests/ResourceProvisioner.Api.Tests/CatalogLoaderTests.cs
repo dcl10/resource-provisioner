@@ -15,7 +15,9 @@ public sealed class CatalogLoaderTests : IDisposable
   {
     var entries = CatalogLoader.Load(ApiFactory.FixtureCatalogRoot);
 
-    Assert.Equal(["test-database", "test-firewall", "test-server"], entries.Select(e => e.Manifest.Id));
+    Assert.Equal(
+      ["test-database", "test-firewall", "test-group", "test-server"],
+      entries.Select(e => e.Manifest.Id));
     Assert.All(entries, e => Assert.True(File.Exists(Path.Combine(e.ModuleDirectory, "main.tf"))));
   }
 
@@ -350,6 +352,34 @@ public sealed class CatalogLoaderTests : IDisposable
     _catalog.AddTypeWithVariable(variable);
 
     AssertLoadFails(expected);
+  }
+
+  [Fact]
+  public void Load_Throws_WhenModuleDoesNotTakeTheDependencyVariable()
+  {
+    _catalog.AddTypeWithVariable(
+      """{ "name": "group_request_id", "type": "string", "description": "d", "references": "sample" }""",
+      "group_request_id");
+
+    AssertLoadFails("the runner sets rp_group_id from it, but variables.tf doesn't declare it");
+  }
+
+  [Fact]
+  public void Load_Throws_WhenTheReferencedTypeHasNoIdOutput()
+  {
+    _catalog.AddType(
+      "other",
+      TempCatalog.ValidManifest
+        .Replace("\"sample\"", "\"other\"", StringComparison.Ordinal)
+        .Replace("""{ "name": "id", "description": "ID." }""", """{ "name": "x", "description": "X." }""",
+          StringComparison.Ordinal),
+      outputsTf: "output \"x\" {\n  value = \"x\"\n}\n");
+    _catalog.AddTypeWithVariable(
+      """{ "name": "other_request_id", "type": "string", "description": "d", "references": "other" }""",
+      "other_request_id");
+    File.AppendAllText(Path.Combine(_catalog.Root, "sample", "variables.tf"), "variable \"rp_other_id\" {\n}\n");
+
+    AssertLoadFails("the runner reads the 'id' output of 'other', which has none");
   }
 
   [Theory]
