@@ -1,4 +1,6 @@
-import { MainNav } from "@/components/main-nav";
+import { Suspense } from "react";
+
+import { MainNav, MainNavLinks } from "@/components/main-nav";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Skeleton } from "@/components/ui/skeleton";
 import { UserMenu } from "@/components/user-menu";
@@ -12,7 +14,10 @@ import type { SessionUser } from "@/lib/auth/types";
 export function HeaderNav({ user }: { user?: SessionUser | null }) {
   return (
     <>
-      <MainNav isAdmin={user?.isAdmin ?? false} />
+      {/* The highlight needs the URL, unknown until request time on dynamic routes such as /chat/[id]. */}
+      <Suspense fallback={<MainNavLinks isAdmin={user?.isAdmin ?? false} />}>
+        <MainNav isAdmin={user?.isAdmin ?? false} />
+      </Suspense>
       <div className="ml-auto flex items-center gap-1">
         <ThemeToggle />
         {user === undefined ? (
