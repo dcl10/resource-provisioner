@@ -43,6 +43,9 @@ public class ApiFactory : WebApplicationFactory<Program>
   /// <summary>The fake Terraform CLI the job processor runs.</summary>
   public FakeTerraform Terraform { get; } = new();
 
+  /// <summary>The fake state backend: which requests Terraform has state for.</summary>
+  public FakeTerraformState TerraformState { get; } = new();
+
   /// <summary>A temp folder for request workspaces, deleted with the factory.</summary>
   public string WorkspacesRoot { get; } = Path.Combine(Path.GetTempPath(), $"rp-workspaces-{Guid.NewGuid():N}");
 
@@ -82,6 +85,8 @@ public class ApiFactory : WebApplicationFactory<Program>
 
       services.RemoveAll<ITerraformProcessRunner>();
       services.AddSingleton<ITerraformProcessRunner>(Terraform);
+      services.RemoveAll<ITerraformStateStore>();
+      services.AddSingleton<ITerraformStateStore>(TerraformState);
       var runner = services.Single(d => d.ImplementationType == typeof(TerraformRunner));
       services.Remove(runner);
     });
