@@ -20,6 +20,7 @@ public class TerraformJobProcessorTests : IClassFixture<ApiFactory>
   {
     _factory = factory;
     _factory.Terraform.Reset();
+    _factory.TerraformState.Reset();
   }
 
   [Fact]
@@ -50,6 +51,7 @@ public class TerraformJobProcessorTests : IClassFixture<ApiFactory>
     Assert.Equal(
       [
         "init -input=false -no-color",
+        $"workspace select -or-create=true -no-color {request.Id}",
         "plan -input=false -no-color -out=plan.tfplan",
         "apply -input=false -no-color plan.tfplan",
         "output -json -no-color",
@@ -74,6 +76,40 @@ public class TerraformJobProcessorTests : IClassFixture<ApiFactory>
     var tfvars = await File.ReadAllTextAsync(
       Path.Combine(_factory.WorkspacesRoot, request.Id.ToString(), TerraformWorkspace.VariablesFile));
     Assert.DoesNotContain("test-do-token", tfvars);
+  }
+
+  [Fact]
+  public async Task RunAsync_PassesStateBackendInEnvironment_NotInFilesOrLog()
+  {
+    var request = await _factory.SeedRequestAsync(OwnerId, RequestStatus.Queued);
+
+    await Run(request.Id);
+
+    Assert.All(_factory.Terraform.Invocations, i =>
+    {
+      Assert.Equal(FakeTerraformState.ConnectionString, i.Environment["PG_CONN_STR"]);
+      Assert.Equal("terraform_state", i.Environment["PG_SCHEMA_NAME"]);
+    });
+    var workspace = Path.Combine(_factory.WorkspacesRoot, request.Id.ToString());
+    Assert.All(
+      Directory.EnumerateFiles(workspace, "*", SearchOption.AllDirectories),
+      f => Assert.DoesNotContain(FakeTerraformState.Password, File.ReadAllText(f)));
+    Assert.All(await Lines(request.Id), l => Assert.DoesNotContain(FakeTerraformState.Password, l.Text));
+  }
+
+  [Fact]
+  public async Task RunAsync_FailsWithoutRunningTerraform_WhenStateAlreadyExists()
+  {
+    var request = await _factory.SeedRequestAsync(OwnerId, RequestStatus.Queued);
+    _factory.TerraformState.Add(request.Id);
+
+    await Run(request.Id);
+
+    Assert.Equal(RequestStatus.Failed, (await Find(request.Id)).Status);
+    Assert.Empty(_factory.Terraform.Invocations);
+    Assert.Equal(
+      $"Failed: Terraform already has state for request {request.Id}, so it wasn't applied again.",
+      (await Lines(request.Id))[^1].Text);
   }
 
   [Fact]
@@ -199,7 +235,11 @@ public class TerraformJobProcessorTests : IClassFixture<ApiFactory>
     Assert.Null(stored.SensitiveOutputs);
     var workspace = Path.Combine(_factory.WorkspacesRoot, request.Id.ToString());
     Assert.Equal(
-      ["init -input=false -no-color", "destroy -auto-approve -input=false -no-color"],
+      [
+        "init -input=false -no-color",
+        $"workspace select -no-color {request.Id}",
+        "destroy -auto-approve -input=false -no-color",
+      ],
       _factory.Terraform.Invocations.Select(i => string.Join(' ', i.Arguments)));
     Assert.All(_factory.Terraform.Invocations, i =>
     {
@@ -256,9 +296,7 @@ public class TerraformJobProcessorTests : IClassFixture<ApiFactory>
     await Run(request.Id);
 
     // The fake doesn't write state; a real apply would.
-    await File.WriteAllTextAsync(
-      Path.Combine(_factory.WorkspacesRoot, request.Id.ToString(), TerraformWorkspace.StateFile),
-      "{}");
+    _factory.TerraformState.Add(request.Id);
     await SetStatus(request.Id, RequestStatus.Destroying);
     await Run(request.Id);
 
@@ -277,9 +315,7 @@ public class TerraformJobProcessorTests : IClassFixture<ApiFactory>
       sensitiveOutputs: """{"root_password":"output-secret"}""");
     if (withState)
     {
-      var workspace = Path.Combine(_factory.WorkspacesRoot, request.Id.ToString());
-      Directory.CreateDirectory(workspace);
-      await File.WriteAllTextAsync(Path.Combine(workspace, TerraformWorkspace.StateFile), "{}");
+      _factory.TerraformState.Add(request.Id);
     }
 
     return request;
