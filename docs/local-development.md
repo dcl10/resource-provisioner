@@ -49,12 +49,12 @@ itself. The API's settings are described in [architecture.md](architecture.md#co
 
 | Volume | Holds |
 | --- | --- |
-| `postgres-app-data` | users' conversations and requests |
+| `postgres-app-data` | users' conversations and requests, and **Terraform state for every request** (schema `terraform_state`) |
 | `postgres-keycloak-data` | users, invitations, the realm and its client secrets |
-| `workspaces` | **Terraform state for every request** |
+| `workspaces` | each request's copy of its module and tfvars, which destroy runs in |
 
-Don't delete `workspaces` (`docker compose down -v`) while anything is provisioned. Without the state the app can't
-destroy those resources, and they keep costing money until someone deletes them in DigitalOcean (everything is tagged
+Don't delete `postgres-app-data` or `workspaces` (`docker compose down -v`) while anything is provisioned. Without the
+state and the workspace the app can't destroy those resources, and they keep costing money until someone deletes them in DigitalOcean (everything is tagged
 `resource-provisioner` and `rp-<requestId>`). Destroy them from the app first.
 
 ## How the containers reach Keycloak
