@@ -18,6 +18,7 @@ public static class RequestSeeding
   /// <param name="variables">Its variables as JSON; valid <c>test-server</c> ones by default.</param>
   /// <param name="outputs">Its non-sensitive outputs as JSON, if any.</param>
   /// <param name="sensitiveOutputs">Its sensitive outputs as JSON, if any.</param>
+  /// <param name="terraformVariables">The tfvars its apply saved, if any.</param>
   /// <returns>The saved request.</returns>
   public static async Task<ProvisioningRequest> SeedRequestAsync(
     this ApiFactory factory,
@@ -26,7 +27,8 @@ public static class RequestSeeding
     string type = "test-server",
     string variables = ServerVariables,
     string? outputs = null,
-    string? sensitiveOutputs = null)
+    string? sensitiveOutputs = null,
+    string? terraformVariables = null)
   {
     var now = DateTimeOffset.UtcNow;
     var request = new ProvisioningRequest
@@ -38,6 +40,7 @@ public static class RequestSeeding
       Variables = variables,
       Status = status,
       Outputs = outputs,
+      TerraformVariables = terraformVariables,
       CreatedAt = now,
       UpdatedAt = now,
     };
