@@ -75,7 +75,10 @@ public class TerraformRunnerTests : IClassFixture<ApiFactory>, IClassFixture<NoT
   [Fact]
   public async Task Runner_RequeuesDestroyingRequests_AtStartup()
   {
-    var request = await _factory.SeedRequestAsync("owner-b", RequestStatus.Destroying);
+    var request = await _factory.SeedRequestAsync(
+      "owner-b",
+      RequestStatus.Destroying,
+      terraformVariables: RequestSeeding.ServerVariables);
     _factory.TerraformState.Add(request.Id);
 
     await using (await Start(new JobDispatcher()))

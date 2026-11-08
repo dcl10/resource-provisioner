@@ -33,7 +33,8 @@ POST /api/requests/{id}/destroy ─▶ status Destroying ─┴─▶ IJobDispat
    skipped).
 2. Fail the job if Terraform already has state for the request ([Workspaces and state](#workspaces-and-state)), so an
    apply never runs over an earlier one.
-3. Prepare the workspace (below).
+3. Build the tfvars (below) and save them on the request (`ProvisioningRequests.TerraformVariables`) before Terraform
+   first runs, so even a half-done apply can be destroyed with the same values. Then prepare the workspace.
 4. Run, in the workspace, with `-input=false -no-color` (`workspace select` takes only `-no-color`):
    `terraform init`, `terraform workspace select -or-create=true <requestId>`, `terraform plan -out=plan.tfplan`,
    `terraform apply plan.tfplan`, `terraform output -json`. A non-zero exit stops the job.
@@ -65,9 +66,11 @@ request to `Destroying` and queues it. The runner then:
 
 1. Checks whether Terraform has state for the request. Without it, Terraform never ran (the apply failed before
    `workspace select`), so it logs `Nothing to destroy: ...` and skips to step 3.
-2. Runs `terraform init`, `terraform workspace select <requestId>` and `terraform destroy -auto-approve` in the
-   workspace, with `-input=false -no-color`. It uses the workspace's own copy of the module and its tfvars, so a type
-   removed from the catalog can still be destroyed.
+2. Prepares the workspace again, from the type's module in the catalog and the tfvars the apply saved, and runs
+   `terraform init`, `terraform workspace select <requestId>` and `terraform destroy -auto-approve` in it, with
+   `-input=false -no-color`. Nothing an earlier job left on disk is needed. If the type is no longer in the catalog,
+   or the request has no saved tfvars (it was applied before they were saved), the request moves to `Failed` without
+   running Terraform, and the log says an admin can delete its resources by the `rp-<requestId>` tag.
 3. Clears the request's outputs and deletes its sensitive outputs (the credentials they held no longer work), then
    moves it to `Destroyed`, logging `Destroyed.`.
 
@@ -93,12 +96,12 @@ The runner also sets `TF_IN_AUTOMATION=1`, `TF_INPUT=0`, `CHECKPOINT_DISABLE=1` 
 
 ## Workspaces and state
 
-Each request gets `<Workspaces:Root>/<requestId>/`:
+Each job prepares `<Workspaces:Root>/<requestId>/` afresh, deleting whatever an earlier job left there:
 
 | File | What it is |
 | --- | --- |
 | the module's files | copied from `catalog/<type>/`, leaving out `resource.json`, `.terraform/`, state, plans and tfvars files |
-| `terraform.tfvars.json` | the request's variables (defaults applied), with the runner's `rp_name_suffix` and `rp_tags` laid over them, so a value smuggled into the variables can't replace the forced tags |
+| `terraform.tfvars.json` | the request's variables (defaults applied), with the runner's `rp_name_suffix` and `rp_tags` (and any variables taken from requests it depends on) laid over them, so a value smuggled into the variables can't replace the forced tags. Built by the apply and saved on the request as `TerraformVariables`; destroy writes the saved copy, so it uses exactly what the apply did, even if the request's dependencies have gone since. |
 | `rp_backend.tf` | `terraform { backend "pg" {} }`, added by the runner; its settings come from the environment, so it holds no credentials |
 | `plan.tfplan` | the saved plan that apply runs |
 
@@ -117,11 +120,14 @@ sslmode='…'`). Npgsql's `SslMode` maps to libpq's: `Disable`, `Allow` and `Pre
 needs TLS, such as DigitalOcean Managed Postgres, must say `SslMode=Require` (or stricter) in the connection string.
 
 Catalog modules may not declare a backend of their own or contain `rp_backend.tf`; the API won't start if one does
-([catalog.md](catalog.md#what-the-loader-checks)). `workspaces/` is gitignored. Destroy still runs in the folder the
-apply prepared, so it must be on a persistent volume: in Docker it's the `workspaces` volume at `/data/workspaces`
-([local-development.md](local-development.md#data)).
+([catalog.md](catalog.md#what-the-loader-checks)).
 
-Providers are downloaded once into `<Workspaces:Root>/.plugin-cache/`, shared by every workspace.
+So the folder is **scratch space**: losing it loses nothing, and the API can run on a disk that doesn't survive a
+restart. `workspaces/` is gitignored. Providers are downloaded into `<Workspaces:Root>/.plugin-cache/`, shared by
+every workspace, so after the folder is lost the next job downloads them again.
+
+A destroy uses the catalog's current module, not the one the apply ran. A module change that adds a required variable
+without a default would stop older requests being destroyed, so give new variables defaults.
 
 ## Logs
 

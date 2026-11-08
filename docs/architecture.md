@@ -13,7 +13,7 @@ web (Next.js + Auth.js) ──Bearer JWT (via /api/proxy)──▶ api (ASP.NET 
                                     ▼                      ├──▶ Postgres (app DB, EF Core)
                           Postgres (keycloak DB)           └──▶ terraform CLI ──▶ DigitalOcean
                           SMTP (MailHog locally)                 (one job at a time, per-request
-                                                                   workspace + state)
+                                                                   scratch workspace)
 ```
 
 | Component | Role |
@@ -145,7 +145,8 @@ AwaitingConfirmation → Cancelled
 
 A provisioning request (`ProvisioningRequest`, table `ProvisioningRequests`) holds the owner's `sub` (and their email
 at the time, so admins can tell whose it is), the type, the validated variables with defaults applied (JSON), the
-status, the non-sensitive outputs (JSON), the conversation it came from and when it was created, last changed and
+tfvars its apply used (JSON, saved by the runner for destroy, never returned by an endpoint), the status, the
+non-sensitive outputs (JSON), the conversation it came from and when it was created, last changed and
 confirmed. Its ID is a GUID, always rendered lowercase (`3f2b8c1e-5d4a-...`): that's the form the `rp-<requestId>`
 tag and the manifests' droplet-reference patterns use.
 

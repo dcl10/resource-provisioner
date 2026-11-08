@@ -27,7 +27,7 @@ public sealed class TerraformWorkspaceTests : IDisposable
   [Fact]
   public void Prepare_CopiesModuleFiles_LeavingOutManifestStateAndTfvars()
   {
-    var workspace = TerraformWorkspace.Prepare(_root, _module, Request("""{"name":"web"}"""));
+    var workspace = Prepare(Request("""{"name":"web"}"""));
 
     var files = Directory.EnumerateFiles(workspace, "*", SearchOption.AllDirectories)
       .Select(f => Path.GetRelativePath(workspace, f).Replace('\\', '/'))
@@ -42,13 +42,11 @@ public sealed class TerraformWorkspaceTests : IDisposable
   }
 
   [Fact]
-  public void Prepare_LaysRunnerVariablesOverRequestVariables()
+  public void BuildVariables_LaysRunnerVariablesOverRequestVariables()
   {
     var request = Request("""{"name":"web","rp_tags":["sneaky"],"rp_name_suffix":"x"}""");
 
-    var workspace = TerraformWorkspace.Prepare(_root, _module, request);
-
-    var tfvars = JsonNode.Parse(File.ReadAllText(Path.Combine(workspace, TerraformWorkspace.VariablesFile)))!;
+    var tfvars = JsonNode.Parse(TerraformWorkspace.BuildVariables(request))!;
     Assert.Equal("web", tfvars["name"]!.GetValue<string>());
     Assert.Equal(request.Id.ToString("N")[..8], tfvars["rp_name_suffix"]!.GetValue<string>());
     Assert.Equal(
@@ -59,10 +57,35 @@ public sealed class TerraformWorkspaceTests : IDisposable
   [Fact]
   public void Prepare_WritesPgBackendFile()
   {
-    var workspace = TerraformWorkspace.Prepare(_root, _module, Request("{}"));
+    var workspace = Prepare(Request("{}"));
 
     var backend = File.ReadAllText(Path.Combine(workspace, TerraformWorkspace.BackendFile));
     Assert.Equal("terraform {\n  backend \"pg\" {}\n}\n", backend.ReplaceLineEndings("\n"));
+  }
+
+  [Fact]
+  public void Prepare_WritesGivenVariables()
+  {
+    var workspace = TerraformWorkspace.Prepare(_root, _module, Guid.NewGuid(), """{ "name": "saved" }""");
+
+    Assert.Equal(
+      """{ "name": "saved" }""",
+      File.ReadAllText(Path.Combine(workspace, TerraformWorkspace.VariablesFile)));
+  }
+
+  [Fact]
+  public void Prepare_DeletesWhatAnEarlierJobLeft()
+  {
+    var request = Request("{}");
+    var workspace = TerraformWorkspace.PathFor(_root, request.Id);
+    Directory.CreateDirectory(Path.Combine(workspace, ".terraform"));
+    File.WriteAllText(Path.Combine(workspace, TerraformWorkspace.PlanFile), "stale");
+    File.WriteAllText(Path.Combine(workspace, ".terraform", "environment"), "stale");
+
+    Prepare(request);
+
+    Assert.False(File.Exists(Path.Combine(workspace, TerraformWorkspace.PlanFile)));
+    Assert.False(Directory.Exists(Path.Combine(workspace, ".terraform")));
   }
 
   public void Dispose()
@@ -75,6 +98,9 @@ public sealed class TerraformWorkspaceTests : IDisposable
       }
     }
   }
+
+  private string Prepare(ProvisioningRequest request) =>
+    TerraformWorkspace.Prepare(_root, _module, request.Id, TerraformWorkspace.BuildVariables(request));
 
   private static ProvisioningRequest Request(string variables) =>
     new() { Id = Guid.NewGuid(), OwnerId = "abc-123", Type = "sample", Variables = variables };

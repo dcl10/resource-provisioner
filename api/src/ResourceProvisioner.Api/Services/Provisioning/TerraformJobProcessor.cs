@@ -14,9 +14,10 @@ using Terraform;
 /// <summary>
 /// <see cref="ITerraformJobProcessor"/>. An apply prepares the request's workspace, then runs <c>terraform init</c>,
 /// <c>workspace select -or-create=true &lt;requestId&gt;</c>, <c>plan -out=plan.tfplan</c>, <c>apply plan.tfplan</c>
-/// and <c>output -json</c>; a destroy runs <c>init</c>, <c>workspace select &lt;requestId&gt;</c> and
-/// <c>destroy -auto-approve</c> in the same workspace. State is in the app database (<see cref="ITerraformStateStore"/>),
-/// in a Terraform workspace named by the request ID. Every line of output is saved as a <see cref="JobLogLine"/>
+/// and <c>output -json</c>; a destroy prepares the workspace again from the catalog and the tfvars the apply saved,
+/// then runs <c>init</c>, <c>workspace select &lt;requestId&gt;</c> and <c>destroy -auto-approve</c>. State is in the
+/// app database (<see cref="ITerraformStateStore"/>), in a Terraform workspace named by the request ID, so nothing on
+/// disk outlives a job. Every line of output is saved as a <see cref="JobLogLine"/>
 /// except <c>output</c>'s, which holds secrets.
 /// </summary>
 /// <param name="db">The app database.</param>
@@ -174,11 +175,18 @@ public partial class TerraformJobProcessor(
     }
 
     var environment = Environment();
+
+    // Saved before Terraform runs, so even a half-done apply can be destroyed with the same variables.
+    request.TerraformVariables = TerraformWorkspace.BuildVariables(
+      request,
+      await DependencyVariables(request, manifest, cancellationToken));
+    await db.SaveChangesAsync(cancellationToken);
+
     var workspace = TerraformWorkspace.Prepare(
       workspaces.Value.Root,
       catalog.GetModuleDirectory(request.Type),
-      request,
-      await DependencyVariables(request, manifest, cancellationToken));
+      request.Id,
+      request.TerraformVariables);
 
     await Step(request.Id, workspace, environment, ["init", "-input=false", "-no-color"], cancellationToken);
     await Step(request.Id, workspace, environment,
@@ -205,16 +213,33 @@ public partial class TerraformJobProcessor(
   }
 
   /// <summary>
-  /// Runs <c>terraform destroy</c> in the request's existing workspace. It needs neither the catalog (the workspace
-  /// has its own copy of the module and its tfvars) nor a fresh plan. With no state, Terraform never created
-  /// anything, so there's nothing to run.
+  /// Runs <c>terraform destroy</c> in a workspace prepared again from the type's catalog module and the tfvars the
+  /// apply saved, so it needs nothing an earlier job left on disk. With no state, Terraform never created anything, so
+  /// there's nothing to run.
   /// </summary>
   private async Task DestroyAsync(ProvisioningRequest request, CancellationToken cancellationToken)
   {
-    var workspace = TerraformWorkspace.PathFor(workspaces.Value.Root, request.Id);
     if (await stateStore.HasStateAsync(request.Id, cancellationToken))
     {
+      var cleanUp = $"an admin can delete its resources in DigitalOcean by the tag rp-{request.Id}.";
+      if (catalog.Find(request.Type) is null)
+      {
+        throw new JobFailedException(
+          $"Resource type '{request.Type}' is no longer in the catalog, so Terraform can't destroy it; {cleanUp}");
+      }
+
+      if (request.TerraformVariables is null)
+      {
+        throw new JobFailedException(
+          $"The variables its apply used weren't saved, so Terraform can't destroy it; {cleanUp}");
+      }
+
       var environment = Environment();
+      var workspace = TerraformWorkspace.Prepare(
+        workspaces.Value.Root,
+        catalog.GetModuleDirectory(request.Type),
+        request.Id,
+        request.TerraformVariables);
       await Step(request.Id, workspace, environment, ["init", "-input=false", "-no-color"], cancellationToken);
       await Step(request.Id, workspace, environment,
         ["workspace", "select", "-no-color", request.Id.ToString()], cancellationToken);

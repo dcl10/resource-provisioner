@@ -7,8 +7,9 @@ using Requests;
 
 /// <summary>
 /// A request's working directory, <c>&lt;Workspaces:Root&gt;/&lt;requestId&gt;/</c>: a copy of its catalog module, its
-/// <c>terraform.tfvars.json</c> and <see cref="BackendFile"/>. The state isn't here: the <c>pg</c> backend keeps it in
-/// the app database (<see cref="TerraformStateStore"/>).
+/// <c>terraform.tfvars.json</c> and <see cref="BackendFile"/>. Nothing in it needs keeping: the <c>pg</c> backend keeps
+/// the state in the app database (<see cref="TerraformStateStore"/>), and the tfvars are saved on the request
+/// (<see cref="ProvisioningRequest.TerraformVariables"/>), so every job prepares it afresh.
 /// </summary>
 public static class TerraformWorkspace
 {
@@ -42,33 +43,45 @@ public static class TerraformWorkspace
     Path.Combine(Path.GetFullPath(workspacesRoot), requestId.ToString());
 
   /// <summary>
-  /// Creates a request's workspace: copies the module (leaving out the manifest, any <c>.terraform/</c> folder, state,
-  /// plans and tfvars), writes <see cref="VariablesFile"/>, the request's variables with the runner's forced
-  /// variables (<see cref="RunnerVariables"/>) laid over them, and writes <see cref="BackendFile"/>.
+  /// The contents of a request's <see cref="VariablesFile"/>: its variables with the runner's forced variables
+  /// (<see cref="RunnerVariables"/>) laid over them.
   /// </summary>
-  /// <param name="workspacesRoot"><c>Workspaces:Root</c>.</param>
-  /// <param name="moduleDirectory">The type's catalog folder.</param>
   /// <param name="request">The request.</param>
   /// <param name="dependencyVariables">
   /// Runner variables taken from the requests it depends on (<c>RunnerVariables.ForDependencies</c>); laid over too.
   /// </param>
-  /// <returns>The workspace's full path.</returns>
-  public static string Prepare(
-    string workspacesRoot,
-    string moduleDirectory,
-    ProvisioningRequest request,
-    JsonObject? dependencyVariables = null)
+  /// <returns>Indented JSON.</returns>
+  public static string BuildVariables(ProvisioningRequest request, JsonObject? dependencyVariables = null)
   {
-    var workspace = PathFor(workspacesRoot, request.Id);
-    CopyModule(moduleDirectory, workspace);
-
     var variables = JsonNode.Parse(request.Variables)?.AsObject() ?? [];
     foreach (var (name, value) in RunnerVariables.For(request).Concat(dependencyVariables ?? []))
     {
       variables[name] = value?.DeepClone();
     }
 
-    File.WriteAllText(Path.Combine(workspace, VariablesFile), variables.ToJsonString(Indented));
+    return variables.ToJsonString(Indented);
+  }
+
+  /// <summary>
+  /// Creates a request's workspace afresh, deleting whatever an earlier job left there: copies the module (leaving out
+  /// the manifest, any <c>.terraform/</c> folder, state, plans and tfvars), then writes <see cref="VariablesFile"/>
+  /// and <see cref="BackendFile"/>.
+  /// </summary>
+  /// <param name="workspacesRoot"><c>Workspaces:Root</c>.</param>
+  /// <param name="moduleDirectory">The type's catalog folder.</param>
+  /// <param name="requestId">The request ID.</param>
+  /// <param name="variablesJson">The tfvars, from <see cref="BuildVariables"/>.</param>
+  /// <returns>The workspace's full path.</returns>
+  public static string Prepare(string workspacesRoot, string moduleDirectory, Guid requestId, string variablesJson)
+  {
+    var workspace = PathFor(workspacesRoot, requestId);
+    if (Directory.Exists(workspace))
+    {
+      Directory.Delete(workspace, recursive: true);
+    }
+
+    CopyModule(moduleDirectory, workspace);
+    File.WriteAllText(Path.Combine(workspace, VariablesFile), variablesJson);
     File.WriteAllText(Path.Combine(workspace, BackendFile), BackendConfig);
     return workspace;
   }
