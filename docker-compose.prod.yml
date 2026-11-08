@@ -125,9 +125,6 @@ services:
       Limits__MaxActiveRequestsPerUser: ${LIMITS_MAX_ACTIVE_REQUESTS_PER_USER:-3}
       Limits__MaxActiveRequestsTotal: ${LIMITS_MAX_ACTIVE_REQUESTS_TOTAL:-10}
       Limits__ChatMessagesPerMinute: ${LIMITS_CHAT_MESSAGES_PER_MINUTE:-10}
-    volumes:
-      # Terraform state for every request. Never delete it while anything is provisioned.
-      - workspaces:/data/workspaces
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -155,4 +152,3 @@ volumes:
   caddy-config:
   postgres-app-data:
   postgres-keycloak-data:
-  workspaces:
