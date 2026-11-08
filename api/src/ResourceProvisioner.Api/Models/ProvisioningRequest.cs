@@ -28,6 +28,14 @@ public class ProvisioningRequest
   /// </summary>
   public required string Variables { get; set; }
 
+  /// <summary>
+  /// The exact <c>terraform.tfvars.json</c> its apply used (<see cref="Variables"/> with the runner's variables laid
+  /// over them), saved before Terraform first runs, so destroy can rebuild the workspace from the catalog. Null until
+  /// the runner applies it. Holds sensitive variables, like <see cref="Variables"/>, so it's never returned by an
+  /// endpoint or shown to the agent.
+  /// </summary>
+  public string? TerraformVariables { get; set; }
+
   /// <summary>Where the request has got to. Also the concurrency token, so two transitions can't both win.</summary>
   public RequestStatus Status { get; set; }
 
