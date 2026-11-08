@@ -22,7 +22,7 @@ variable "droplet_size" {
 }
 
 variable "data_volume_size_gb" {
-  description = "Size of the block-storage volume holding Docker's data (databases, Terraform workspaces, images)."
+  description = "Size of the block-storage volume holding Docker's data (databases, users' Terraform state, images)."
   type        = number
   default     = 25
 

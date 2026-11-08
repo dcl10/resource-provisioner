@@ -11,7 +11,7 @@ packages:
   - unattended-upgrades
 
 write_files:
-  # Docker keeps images, containers and volumes (both databases, the Terraform workspaces) on the data volume.
+  # Docker keeps images, containers and volumes (both databases, with users' Terraform state in the app's) on the data volume.
   - path: /etc/docker/daemon.json
     permissions: "0644"
     content: |

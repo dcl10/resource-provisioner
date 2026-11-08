@@ -52,7 +52,7 @@ WORKDIR /app
 COPY --from=terraform /usr/local/bin/terraform /usr/local/bin/terraform
 COPY --from=build /out/app ./
 COPY catalog ./catalog
-# Per-request workspaces hold Terraform state, so they must live on a volume mounted here.
+# Scratch space for Terraform jobs; state is in the app database, so this needs no volume.
 RUN mkdir -p /data/workspaces && chown app:app /data/workspaces
 ENV Catalog__Root=/app/catalog \
     Workspaces__Root=/data/workspaces \
