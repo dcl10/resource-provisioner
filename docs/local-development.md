@@ -51,7 +51,6 @@ itself. The API's settings are described in [architecture.md](architecture.md#co
 | --- | --- |
 | `postgres-app-data` | users' conversations and requests, and **Terraform state for every request** (schema `terraform_state`) |
 | `postgres-keycloak-data` | users, invitations, the realm and its client secrets |
-| `workspaces` | scratch space for Terraform: each job's copy of the module and tfvars, and the provider cache. Safe to lose. |
 
 Don't delete `postgres-app-data` (`docker compose down -v`) while anything is provisioned. Without the state the app
 can't destroy those resources, and they keep costing money until someone deletes them in DigitalOcean (everything is
@@ -79,7 +78,7 @@ Outside Docker everything is `localhost:8080`, so these settings change nothing 
 
 | Image | Built from | |
 | --- | --- | --- |
-| `api` | `api/Dockerfile` (context: the repo root) | ASP.NET Core runtime, the published API, the `catalog/` modules and a pinned Terraform CLI. Runs as the non-root `app` user; workspaces live in `/data/workspaces`. |
+| `api` | `api/Dockerfile` (context: the repo root) | ASP.NET Core runtime, the published API, the `catalog/` modules and a pinned Terraform CLI. Runs as the non-root `app` user; Terraform's scratch workspaces go in `/data/workspaces`, inside the container, with no volume, since state is in the app database. |
 | `migrate` | `api/Dockerfile`, target `migrate` | An EF Core migrations bundle that applies pending migrations to `ConnectionStrings__DefaultConnection` and exits. The API never migrates at startup. |
 | `web` | `web/Dockerfile` | Next.js's standalone server on Node 22, as the `node` user. Every setting is read at runtime. |
 

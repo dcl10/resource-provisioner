@@ -17,7 +17,7 @@ Terraform with its own local state, separate from the per-request state the app 
 | Resource | |
 | --- | --- |
 | Droplet | Ubuntu 24.04, `s-2vcpu-4gb` by default, monitoring on, tagged `resource-provisioner-host` (never `resource-provisioner`, which marks users' resources) |
-| Block-storage volume | Mounted at `/mnt/rp-data`. Holds Docker's data (both databases, **every request's Terraform state**, images), the checkout and the root-only `.env`. `prevent_destroy`, so Terraform won't delete it. |
+| Block-storage volume | Mounted at `/mnt/rp-data`. Holds Docker's data (both databases, with **every request's Terraform state** in the app's, images), the checkout and the root-only `.env`. `prevent_destroy`, so Terraform won't delete it. |
 | Reserved IP | The hostnames come from it, so they survive the droplet being replaced |
 | Cloud firewall | SSH (22) only from `ssh_allowed_cidrs`; 80 and 443 from anywhere; ICMP |
 | SSH key | Yours, for `root` |
@@ -105,6 +105,12 @@ before the API starts. A deploy restarts the API, which fails any job that was a
 There's no CI deploy. A GitHub Action could run the same command over SSH, with a deploy key and the host's IP as
 secrets and the firewall opened to GitHub's runners; it isn't set up.
 
+**Upgrading from local Terraform state.** Before Terraform state moved into the app database, it lived in the API's
+`workspaces` volume. A host deployed before then must have every request destroyed (or never applied) before it
+deploys this version: the runner no longer reads local state, so it couldn't destroy those resources. After deploying,
+the old volume holds nothing the app uses; remove it with `docker volume ls` and `docker volume rm
+<project>_workspaces`.
+
 ## Admin access
 
 | What | How |
@@ -118,8 +124,10 @@ To let someone else SSH in, add their IP to `ssh_allowed_cidrs` and `terraform a
 
 ## Data and backups
 
-Everything that matters is on the volume: both databases, the Terraform state of every user's resource, the
-checkout and `.env`. Replacing the droplet (`terraform apply -replace=digitalocean_droplet.host`, for example to
+Everything that matters is on the volume: both databases (the app's holds the Terraform state of every user's
+resource, in its `terraform_state` schema), the checkout and `.env`. The API keeps nothing it needs on its own disk:
+each job rebuilds its Terraform workspace from the catalog and the database
+([provisioning.md](provisioning.md#workspaces-and-state)). Replacing the droplet (`terraform apply -replace=digitalocean_droplet.host`, for example to
 apply a changed cloud-init) reattaches the volume, and the new droplet's first boot finds the checkout and `.env` and
 leaves them alone; run `deploy/deploy.sh` afterwards.
 
