@@ -34,7 +34,10 @@ public sealed class TerraformWorkspaceTests : IDisposable
       .Order()
       .ToList();
     Assert.Equal(
-      [".terraform.lock.hcl", "files/cloud-init.yaml", "main.tf", "outputs.tf", "terraform.tfvars.json", "variables.tf"],
+      [
+        ".terraform.lock.hcl", "files/cloud-init.yaml", "main.tf", "outputs.tf", "rp_backend.tf",
+        "terraform.tfvars.json", "variables.tf",
+      ],
       files);
   }
 
@@ -54,15 +57,12 @@ public sealed class TerraformWorkspaceTests : IDisposable
   }
 
   [Fact]
-  public void Prepare_Throws_WhenWorkspaceAlreadyHasState()
+  public void Prepare_WritesPgBackendFile()
   {
-    var request = Request("{}");
-    var workspace = TerraformWorkspace.PathFor(_root, request.Id);
-    Directory.CreateDirectory(workspace);
-    File.WriteAllText(Path.Combine(workspace, TerraformWorkspace.StateFile), "{}");
+    var workspace = TerraformWorkspace.Prepare(_root, _module, Request("{}"));
 
-    Assert.Throws<JobFailedException>(() => TerraformWorkspace.Prepare(_root, _module, request));
-    Assert.Equal("{}", File.ReadAllText(Path.Combine(workspace, TerraformWorkspace.StateFile)));
+    var backend = File.ReadAllText(Path.Combine(workspace, TerraformWorkspace.BackendFile));
+    Assert.Equal("terraform {\n  backend \"pg\" {}\n}\n", backend.ReplaceLineEndings("\n"));
   }
 
   public void Dispose()
