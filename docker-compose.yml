@@ -128,9 +128,6 @@ services:
       Limits__ChatMessagesPerMinute: ${LIMITS_CHAT_MESSAGES_PER_MINUTE:-10}
     ports:
       - "5080:8080"
-    volumes:
-      # Terraform state for every request: lose it and those resources can't be destroyed from the app.
-      - workspaces:/data/workspaces
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -164,4 +161,3 @@ services:
 volumes:
   postgres-app-data:
   postgres-keycloak-data:
-  workspaces:
