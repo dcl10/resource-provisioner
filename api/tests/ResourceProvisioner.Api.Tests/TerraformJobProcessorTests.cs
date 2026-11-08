@@ -113,6 +113,22 @@ public class TerraformJobProcessorTests : IClassFixture<ApiFactory>
   }
 
   [Fact]
+  public async Task RunAsync_SavesTfvarsOnRequest_BeforeTerraformRuns()
+  {
+    var request = await _factory.SeedRequestAsync(OwnerId, RequestStatus.Queued);
+    _factory.Terraform.Script("plan", 1);
+
+    await Run(request.Id);
+
+    var stored = await Find(request.Id);
+    Assert.Equal(RequestStatus.Failed, stored.Status);
+    var tfvars = await File.ReadAllTextAsync(
+      Path.Combine(_factory.WorkspacesRoot, request.Id.ToString(), TerraformWorkspace.VariablesFile));
+    Assert.Equal(tfvars, stored.TerraformVariables);
+    Assert.Contains($"rp-{request.Id}", stored.TerraformVariables, StringComparison.Ordinal);
+  }
+
+  [Fact]
   public async Task RunAsync_WritesTfvarsWithForcedTags()
   {
     var request = await _factory.SeedRequestAsync(OwnerId, RequestStatus.Queued);
@@ -279,14 +295,50 @@ public class TerraformJobProcessorTests : IClassFixture<ApiFactory>
   }
 
   [Fact]
-  public async Task RunAsync_Destroys_WhenTypeIsNoLongerInCatalog()
+  public async Task RunAsync_FailsAndKeepsOutputs_WhenDestroyingTypeIsNoLongerInCatalog()
   {
     var request = await SeedDestroying(withState: true, type: "retired-type");
 
     await Run(request.Id);
 
+    var stored = await Find(request.Id);
+    Assert.Equal(RequestStatus.Failed, stored.Status);
+    Assert.NotNull(stored.Outputs);
+    Assert.Empty(_factory.Terraform.Invocations);
+    Assert.Equal(
+      "Failed: Resource type 'retired-type' is no longer in the catalog, so Terraform can't destroy it; an admin " +
+      $"can delete its resources in DigitalOcean by the tag rp-{request.Id}.",
+      (await Lines(request.Id))[^1].Text);
+  }
+
+  [Fact]
+  public async Task RunAsync_FailsDestroy_WhenTfvarsWereNotSaved()
+  {
+    var request = await SeedDestroying(withState: true, terraformVariables: null);
+
+    await Run(request.Id);
+
+    Assert.Equal(RequestStatus.Failed, (await Find(request.Id)).Status);
+    Assert.Empty(_factory.Terraform.Invocations);
+    Assert.StartsWith(
+      "Failed: The variables its apply used weren't saved",
+      (await Lines(request.Id))[^1].Text,
+      StringComparison.Ordinal);
+  }
+
+  [Fact]
+  public async Task RunAsync_DestroysInRebuiltWorkspace_WithSavedTfvars()
+  {
+    const string saved = """{ "name": "saved-at-apply" }""";
+    var request = await SeedDestroying(withState: true, terraformVariables: saved);
+
+    await Run(request.Id);
+
     Assert.Equal(RequestStatus.Destroyed, (await Find(request.Id)).Status);
-    Assert.Contains(_factory.Terraform.Invocations, i => i.Arguments[0] == "destroy");
+    var workspace = Path.Combine(_factory.WorkspacesRoot, request.Id.ToString());
+    Assert.Equal(saved, await File.ReadAllTextAsync(Path.Combine(workspace, TerraformWorkspace.VariablesFile)));
+    Assert.True(File.Exists(Path.Combine(workspace, "main.tf")));
+    Assert.True(File.Exists(Path.Combine(workspace, TerraformWorkspace.BackendFile)));
   }
 
   [Fact]
@@ -295,24 +347,34 @@ public class TerraformJobProcessorTests : IClassFixture<ApiFactory>
     var request = await _factory.SeedRequestAsync(OwnerId, RequestStatus.Queued);
     await Run(request.Id);
 
-    // The fake doesn't write state; a real apply would.
+    // The fake doesn't write state; a real apply would. Nothing on disk needs to survive between jobs.
     _factory.TerraformState.Add(request.Id);
+    Directory.Delete(_factory.WorkspacesRoot, recursive: true);
     await SetStatus(request.Id, RequestStatus.Destroying);
     await Run(request.Id);
 
     Assert.Equal(RequestStatus.Destroyed, (await Find(request.Id)).Status);
     Assert.Single(
       _factory.Terraform.Invocations.Select(i => i.WorkingDirectory).Distinct());
+    var applied = (await Find(request.Id)).TerraformVariables;
+    Assert.Equal(
+      applied,
+      await File.ReadAllTextAsync(
+        Path.Combine(_factory.WorkspacesRoot, request.Id.ToString(), TerraformWorkspace.VariablesFile)));
   }
 
-  private async Task<ProvisioningRequest> SeedDestroying(bool withState, string type = "test-server")
+  private async Task<ProvisioningRequest> SeedDestroying(
+    bool withState,
+    string type = "test-server",
+    string? terraformVariables = RequestSeeding.ServerVariables)
   {
     var request = await _factory.SeedRequestAsync(
       OwnerId,
       RequestStatus.Destroying,
       type,
       outputs: """{"id":"123"}""",
-      sensitiveOutputs: """{"root_password":"output-secret"}""");
+      sensitiveOutputs: """{"root_password":"output-secret"}""",
+      terraformVariables: terraformVariables);
     if (withState)
     {
       _factory.TerraformState.Add(request.Id);
