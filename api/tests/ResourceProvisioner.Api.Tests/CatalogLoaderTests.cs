@@ -133,6 +133,26 @@ public sealed class CatalogLoaderTests : IDisposable
   }
 
   [Theory]
+  [InlineData("main.tf", "terraform {\n  backend \"s3\" {}\n}\n")]
+  [InlineData("versions.tf", "terraform {\n  required_version = \">= 1.6\"\n  backend \"local\" {\n  }\n}\n")]
+  public void Load_Throws_WhenModuleDeclaresBackend(string file, string content)
+  {
+    var dir = _catalog.AddType("sample");
+    File.WriteAllText(Path.Combine(dir, file), content);
+
+    AssertLoadFails($"{file} declares a backend");
+  }
+
+  [Fact]
+  public void Load_Throws_WhenModuleHasRunnerBackendFile()
+  {
+    var dir = _catalog.AddType("sample");
+    File.WriteAllText(Path.Combine(dir, "rp_backend.tf"), "");
+
+    AssertLoadFails("rp_backend.tf is reserved");
+  }
+
+  [Theory]
   [InlineData("{ not json", "not a valid manifest")]
   [InlineData("""{ "id": "sample" }""", "not a valid manifest")]
   [InlineData("""{ "id": "sample", "displayName": "S", "description": "D", "costHint": "C", "extra": 1 }""",

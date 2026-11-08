@@ -187,6 +187,8 @@ invalid, listing every problem in every manifest. Hidden folders (`.terraform/`)
 - every manifest variable is declared in `variables.tf`, the outputs match `outputs.tf` exactly, and `sensitive`
   agrees on both sides. This reads `terraform fmt`-formatted files (top-level blocks close with `}` in column 0); it
   is not a full HCL parser.
+- no `.tf` file declares a `backend`, and there's no `rp_backend.tf`: the runner adds that file to set the state
+  backend itself ([provisioning.md](provisioning.md#workspaces-and-state))
 
 `dotnet test` also loads the real `catalog/` (`CatalogLoaderTests.Load_LoadsRepositoryCatalog_WithoutErrors`), so a
 bad manifest fails CI rather than a deploy.

@@ -1,11 +1,13 @@
 namespace ResourceProvisioner.Api.ResourceCatalog;
 
 using System.Text.RegularExpressions;
+using Services.Provisioning;
 using Services.Requests;
 
 /// <summary>
 /// Checks that a manifest matches its Terraform module: the module files exist, every manifest variable is declared in
-/// <c>variables.tf</c>, the outputs match <c>outputs.tf</c> exactly, and <c>sensitive</c> agrees on both sides. This is
+/// <c>variables.tf</c>, the outputs match <c>outputs.tf</c> exactly, <c>sensitive</c> agrees on both sides, and the
+/// module leaves the state backend to the runner (no <c>backend</c> block, no <c>rp_backend.tf</c>). This is
 /// a light read of <c>terraform fmt</c>-formatted files (top-level blocks close with <c>}</c> in column 0), not an HCL
 /// parser.
 /// </summary>
@@ -25,6 +27,16 @@ internal static partial class TerraformModuleChecker
     {
       return problems;
     }
+
+    // The runner adds the pg backend to every workspace; a module's own backend would clash with it.
+    if (File.Exists(Path.Combine(moduleDirectory, TerraformWorkspace.BackendFile)))
+    {
+      problems.Add($"{TerraformWorkspace.BackendFile} is reserved for the runner's state backend.");
+    }
+
+    problems.AddRange(Directory.EnumerateFiles(moduleDirectory, "*.tf")
+      .Where(f => BackendRegex().IsMatch(File.ReadAllText(f)))
+      .Select(f => $"{Path.GetFileName(f)} declares a backend; the runner sets the state backend itself."));
 
     // Variables not in the manifest are allowed: the runner sets some itself (tags, for example).
     var variables = ReadBlocks(Path.Combine(moduleDirectory, "variables.tf"), "variable");
@@ -86,6 +98,9 @@ internal static partial class TerraformModuleChecker
   [GeneratedRegex("""^(?<kind>variable|output)\s+"(?<name>[^"]+)"\s*\{(?<body>.*?)^\}""",
     RegexOptions.Multiline | RegexOptions.Singleline)]
   private static partial Regex BlockRegex();
+
+  [GeneratedRegex(@"^\s*backend\s+""", RegexOptions.Multiline)]
+  private static partial Regex BackendRegex();
 
   // Only the block's own attribute (indented two spaces by terraform fmt), not one inside a nested block.
   [GeneratedRegex(@"^  sensitive\s*=\s*true\s*$", RegexOptions.Multiline)]

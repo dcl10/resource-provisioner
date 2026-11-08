@@ -57,7 +57,7 @@ public class TerraformRunnerTests : IClassFixture<ApiFactory>, IClassFixture<NoT
     // Each job's four commands ran together: the second job didn't start until the first had finished.
     var workspaces = _factory.Terraform.Invocations.Select(i => Path.GetFileName(i.WorkingDirectory)).ToList();
     Assert.Equal(
-      [.. Enumerable.Repeat(first.Id.ToString(), 4), .. Enumerable.Repeat(second.Id.ToString(), 4)],
+      [.. Enumerable.Repeat(first.Id.ToString(), 5), .. Enumerable.Repeat(second.Id.ToString(), 5)],
       workspaces.Where(w => w == first.Id.ToString() || w == second.Id.ToString()));
   }
 
@@ -76,9 +76,7 @@ public class TerraformRunnerTests : IClassFixture<ApiFactory>, IClassFixture<NoT
   public async Task Runner_RequeuesDestroyingRequests_AtStartup()
   {
     var request = await _factory.SeedRequestAsync("owner-b", RequestStatus.Destroying);
-    var workspace = Path.Combine(_factory.WorkspacesRoot, request.Id.ToString());
-    Directory.CreateDirectory(workspace);
-    await File.WriteAllTextAsync(Path.Combine(workspace, TerraformWorkspace.StateFile), "{}");
+    _factory.TerraformState.Add(request.Id);
 
     await using (await Start(new JobDispatcher()))
     {

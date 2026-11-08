@@ -7,7 +7,8 @@ using Requests;
 
 /// <summary>
 /// A request's working directory, <c>&lt;Workspaces:Root&gt;/&lt;requestId&gt;/</c>: a copy of its catalog module, its
-/// <c>terraform.tfvars.json</c>, and the local state that destroy (#16) uses later.
+/// <c>terraform.tfvars.json</c> and <see cref="BackendFile"/>. The state isn't here: the <c>pg</c> backend keeps it in
+/// the app database (<see cref="TerraformStateStore"/>).
 /// </summary>
 public static class TerraformWorkspace
 {
@@ -17,8 +18,19 @@ public static class TerraformWorkspace
   /// <summary>The saved plan that apply runs.</summary>
   public const string PlanFile = "plan.tfplan";
 
-  /// <summary>Terraform's local state file.</summary>
-  public const string StateFile = "terraform.tfstate";
+  /// <summary>
+  /// The file the runner adds to every workspace to select the <c>pg</c> backend. Its settings come from the
+  /// environment (<see cref="ITerraformStateStore.BackendEnvironment"/>), so the file holds no credentials. Catalog
+  /// modules may not declare a backend of their own, or use this file name.
+  /// </summary>
+  public const string BackendFile = "rp_backend.tf";
+
+  private const string BackendConfig = """
+    terraform {
+      backend "pg" {}
+    }
+
+    """;
 
   private static readonly JsonSerializerOptions Indented = new() { WriteIndented = true };
 
@@ -31,8 +43,8 @@ public static class TerraformWorkspace
 
   /// <summary>
   /// Creates a request's workspace: copies the module (leaving out the manifest, any <c>.terraform/</c> folder, state,
-  /// plans and tfvars) and writes <see cref="VariablesFile"/>, the request's variables with the runner's forced
-  /// variables (<see cref="RunnerVariables"/>) laid over them.
+  /// plans and tfvars), writes <see cref="VariablesFile"/>, the request's variables with the runner's forced
+  /// variables (<see cref="RunnerVariables"/>) laid over them, and writes <see cref="BackendFile"/>.
   /// </summary>
   /// <param name="workspacesRoot"><c>Workspaces:Root</c>.</param>
   /// <param name="moduleDirectory">The type's catalog folder.</param>
@@ -41,7 +53,6 @@ public static class TerraformWorkspace
   /// Runner variables taken from the requests it depends on (<c>RunnerVariables.ForDependencies</c>); laid over too.
   /// </param>
   /// <returns>The workspace's full path.</returns>
-  /// <exception cref="JobFailedException">The workspace already holds state, which a fresh apply must not touch.</exception>
   public static string Prepare(
     string workspacesRoot,
     string moduleDirectory,
@@ -49,12 +60,6 @@ public static class TerraformWorkspace
     JsonObject? dependencyVariables = null)
   {
     var workspace = PathFor(workspacesRoot, request.Id);
-    if (File.Exists(Path.Combine(workspace, StateFile)))
-    {
-      throw new JobFailedException(
-        $"The workspace for request {request.Id} already has Terraform state, so it wasn't overwritten.");
-    }
-
     CopyModule(moduleDirectory, workspace);
 
     var variables = JsonNode.Parse(request.Variables)?.AsObject() ?? [];
@@ -64,6 +69,7 @@ public static class TerraformWorkspace
     }
 
     File.WriteAllText(Path.Combine(workspace, VariablesFile), variables.ToJsonString(Indented));
+    File.WriteAllText(Path.Combine(workspace, BackendFile), BackendConfig);
     return workspace;
   }
 

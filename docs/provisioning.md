@@ -31,13 +31,15 @@ POST /api/requests/{id}/destroy ─▶ status Destroying ─┴─▶ IJobDispat
 
 1. Move the request `Queued → Applying` (the status is a concurrency token, so a request that changed meanwhile is
    skipped).
-2. Prepare the workspace (below).
-3. Run, in the workspace, with `-input=false -no-color`:
-   `terraform init`, `terraform plan -out=plan.tfplan`, `terraform apply plan.tfplan`, `terraform output -json`.
-   A non-zero exit stops the job.
-4. Split the outputs: an output is sensitive if the manifest **or** Terraform marks it sensitive. Non-sensitive ones go
+2. Fail the job if Terraform already has state for the request ([Workspaces and state](#workspaces-and-state)), so an
+   apply never runs over an earlier one.
+3. Prepare the workspace (below).
+4. Run, in the workspace, with `-input=false -no-color` (`workspace select` takes only `-no-color`):
+   `terraform init`, `terraform workspace select -or-create=true <requestId>`, `terraform plan -out=plan.tfplan`,
+   `terraform apply plan.tfplan`, `terraform output -json`. A non-zero exit stops the job.
+5. Split the outputs: an output is sensitive if the manifest **or** Terraform marks it sensitive. Non-sensitive ones go
    in `ProvisioningRequests.Outputs`, sensitive ones in `RequestSensitiveOutputs`.
-5. Move to `Succeeded`, or to `Failed` with a last log line saying why (`Failed: terraform plan exited with code 1.`).
+6. Move to `Succeeded`, or to `Failed` with a last log line saying why (`Failed: terraform plan exited with code 1.`).
    A failed apply may have created part of the module; the request can still be destroyed.
 
 The job never sees the user or the LLM: everything it runs comes from the vetted module and the validated variables.
@@ -61,10 +63,11 @@ owner or an admin (see [architecture.md](architecture.md#ownership)), and only o
 still exist (see [Dependencies](architecture.md#dependencies)); otherwise it answers 409. It moves the
 request to `Destroying` and queues it. The runner then:
 
-1. Checks the workspace for `terraform.tfstate`. Without it, Terraform never created anything (the apply failed before
-   `apply`, or before the workspace was made), so it logs `Nothing to destroy: ...` and skips to step 3.
-2. Runs `terraform init` and `terraform destroy -auto-approve` in the workspace, with `-input=false -no-color`. It uses
-   the workspace's own copy of the module and its tfvars, so a type removed from the catalog can still be destroyed.
+1. Checks whether Terraform has state for the request. Without it, Terraform never ran (the apply failed before
+   `workspace select`), so it logs `Nothing to destroy: ...` and skips to step 3.
+2. Runs `terraform init`, `terraform workspace select <requestId>` and `terraform destroy -auto-approve` in the
+   workspace, with `-input=false -no-color`. It uses the workspace's own copy of the module and its tfvars, so a type
+   removed from the catalog can still be destroyed.
 3. Clears the request's outputs and deletes its sensitive outputs (the credentials they held no longer work), then
    moves it to `Destroyed`, logging `Destroyed.`.
 
@@ -82,6 +85,7 @@ Credentials go to Terraform **only in its environment**, never in tfvars, the wo
 
 | Variable | From | Used by |
 | --- | --- | --- |
+| `PG_CONN_STR`, `PG_SCHEMA_NAME` | `ConnectionStrings:DefaultConnection`, converted to libpq form; the schema is `terraform_state` | the `pg` state backend ([below](#workspaces-and-state)) |
 | `DIGITALOCEAN_TOKEN` | `DigitalOcean:Token` (required; without it the job fails before running anything) | the `digitalocean` provider |
 | `SPACES_ACCESS_KEY_ID`, `SPACES_SECRET_ACCESS_KEY` | `Spaces:AccessId`, `Spaces:SecretKey` (set only when both are) | `digitalocean_spaces_bucket` |
 
@@ -95,13 +99,27 @@ Each request gets `<Workspaces:Root>/<requestId>/`:
 | --- | --- |
 | the module's files | copied from `catalog/<type>/`, leaving out `resource.json`, `.terraform/`, state, plans and tfvars files |
 | `terraform.tfvars.json` | the request's variables (defaults applied), with the runner's `rp_name_suffix` and `rp_tags` laid over them, so a value smuggled into the variables can't replace the forced tags |
+| `rp_backend.tf` | `terraform { backend "pg" {} }`, added by the runner; its settings come from the environment, so it holds no credentials |
 | `plan.tfplan` | the saved plan that apply runs |
-| `terraform.tfstate` | local state, kept so destroy can run in the same folder |
 
-State is local on purpose: one folder per request keeps every request independent, and nothing else needs to read it.
-Preparing a workspace that already has state fails the job instead of overwriting it. `workspaces/` is gitignored and
-must be on a persistent volume, or the state, and with it the ability to destroy, is lost: in Docker it's the
-`workspaces` volume at `/data/workspaces` ([local-development.md](local-development.md#data)).
+**State is in the app database**, not the folder. Terraform's [`pg`
+backend](https://developer.hashicorp.com/terraform/language/backend/pg) keeps it in the `terraform_state` schema of
+the app's Postgres, which Terraform creates on first use (table `states`: one row per Terraform workspace, `name` and
+`data`). EF Core migrations don't touch that schema. Each request has its own Terraform workspace, named by its
+request ID, so requests stay independent; the row appears when `workspace select -or-create=true` first runs, and
+`TerraformStateStore` checks for it before an apply (which must find none) and a destroy (which has nothing to do
+without one). The backend locks a workspace with a Postgres advisory lock while Terraform writes it. State is backed up
+with the app database, and is lost with it.
+
+`PG_CONN_STR` is the app's connection string in libpq form (`host='…' port='…' dbname='…' user='…' password='…'
+sslmode='…'`). Npgsql's `SslMode` maps to libpq's: `Disable`, `Allow` and `Prefer` (Npgsql's default) become
+`disable`; `Require`, `VerifyCA` and `VerifyFull` become `require`, `verify-ca` and `verify-full`. A database that
+needs TLS, such as DigitalOcean Managed Postgres, must say `SslMode=Require` (or stricter) in the connection string.
+
+Catalog modules may not declare a backend of their own or contain `rp_backend.tf`; the API won't start if one does
+([catalog.md](catalog.md#what-the-loader-checks)). `workspaces/` is gitignored. Destroy still runs in the folder the
+apply prepared, so it must be on a persistent volume: in Docker it's the `workspaces` volume at `/data/workspaces`
+([local-development.md](local-development.md#data)).
 
 Providers are downloaded once into `<Workspaces:Root>/.plugin-cache/`, shared by every workspace.
 
@@ -141,4 +159,5 @@ writes from its own scope. An `AwaitingConfirmation` request ends straight away;
 
 `ITerraformProcessRunner` is the only thing that starts a process. Tests swap it for `FakeTerraform`, which records
 each command and plays back scripted lines and exit codes, and the test host leaves `TerraformRunner` out so tests
-decide when jobs run. `TerraformProcessRunnerTests` runs the real wrapper against `/bin/sh` instead of Terraform.
+decide when jobs run. Tests run on SQLite, so `ITerraformStateStore` is swapped for `FakeTerraformState`, where a
+test says which requests have state; `TerraformStateStoreTests` covers the connection-string conversion. `TerraformProcessRunnerTests` runs the real wrapper against `/bin/sh` instead of Terraform.
