@@ -19,7 +19,7 @@ web (Next.js + Auth.js) ──Bearer JWT (via /api/proxy)──▶ api (ASP.NET 
 | Component | Role |
 | --- | --- |
 | `web/` | Chat page, requests list and detail, admin Users page. A `/api/proxy/[...path]` route attaches the session's access token (and passes SSE through), so the browser never holds the API token. |
-| `api/` | Auth and policies, invitations, catalog, the Claude agent, provisioning requests and the Terraform runner. |
+| `api/` | Auth and policies, invitations, catalog, the Claude agent, projects, provisioning requests and the Terraform runner. |
 | `catalog/<type>/` | `main.tf`, `variables.tf`, `outputs.tf` and a `resource.json` manifest for each supported resource type. |
 | `keycloak/` | `realm-export.json` for the `resource-provisioner` realm, imported on first start. |
 | `infra/` | Terraform for the droplet that hosts the POC, with its own state, separate from the catalog ([deployment.md](deployment.md)). |
@@ -41,14 +41,16 @@ api/
 │   ├── Config/                  # typed options, one class per config section
 │   ├── Controllers/             # API controllers, one per resource (MeController: GET /api/me,
 │   │                            # CatalogController: GET /api/catalog, InvitationsController: /api/invitations,
-│   │                            # RequestsController: /api/requests, ConversationsController: /api/conversations)
+│   │                            # RequestsController: /api/requests, ProjectsController: /api/projects,
+│   │                            # ConversationsController: /api/conversations)
 │   ├── Data/                    # AppDbContext, design-time factory, Migrations/
 │   ├── Extensions/              # service registration helpers
-│   ├── Models/                  # request and response types, the Invitation, ProvisioningRequest, JobLogLine,
-│   │                            # Conversation and ConversationMessage entities
+│   ├── Models/                  # request and response types, the Invitation, ProvisioningRequest, Project,
+│   │                            # JobLogLine, Conversation and ConversationMessage entities
 │   ├── ResourceCatalog/         # manifest types, loader and checks, ICatalogService (see catalog.md)
 │   └── Services/                # Keycloak/ (IKeycloakUserAdmin over the admin API), Invitations/ (see auth-setup.md),
 │                                # Requests/ (IProvisioningRequestService, the state machine, RunnerVariables, logs),
+│                                # Projects/ (IProjectService),
 │                                # Provisioning/ (the Terraform runner, see provisioning.md),
 │                                # Terraform/ (ITerraformProcessRunner, the only thing that starts the CLI),
 │                                # Agent/ (the chat agent: IChatModel over Anthropic, tools, loop; see agent.md)
@@ -57,7 +59,8 @@ api/
                                  # with it; runner off), TestAuthHandler,
                                  # TestAdminController (test-only admin endpoint), InMemoryKeycloakUserAdmin,
                                  # FakeTerraform, FakeChatModel (scripted Claude), Sse (parses event streams),
-                                 # TempCatalog, RequestSeeding (requests in any status),
+                                 # TempCatalog, RequestSeeding (requests and projects in any status; a request
+                                 # goes in its owner's "default" project unless told otherwise),
                                  # catalog/ (fixture resource types, not real modules)
 ```
 
@@ -127,13 +130,14 @@ When deployed they come from environment variables (`Anthropic__ApiKey` and so o
 1. **The LLM never writes HCL and never triggers provisioning.** It picks a type from the vetted catalog and fills in
    its variables. The `propose_request` tool validates them on the server and creates a request in
    `AwaitingConfirmation`. Provisioning starts only when the user clicks Confirm in the UI, which calls
-   `POST /api/requests/{id}/confirm`.
+   `POST /api/requests/{id}/confirm`, or submits the New project form (`POST /api/projects`), where the submit is
+   the confirmation.
 2. **Each `resource.json` manifest is the single source of truth.** Tool schemas, server-side validation and the
    confirmation summary are all generated from it.
 3. **The agent has four tools:** `list_resource_types`, `get_resource_spec`, `list_my_resources` and
    `propose_request`.
 4. **Every endpoint requires sign-in.** Sign-in is invite-only through Keycloak. Users see only their own
-   conversations and requests; `rp-admin` sees everything, manages invitations and can destroy anyone's request
+   conversations, projects and requests; `rp-admin` sees everything, manages invitations and can destroy anyone's request
    (to clean up spend), but confirms, cancels and references only their own.
 5. **Spend is capped:** a per-user rate limit on chat messages, a per-user cap on active resources, a global cap,
    cheap sizes allow-listed in the manifests, and a runner that applies one job at a time. The default model is
@@ -155,8 +159,8 @@ AwaitingConfirmation → Cancelled
 A provisioning request (`ProvisioningRequest`, table `ProvisioningRequests`) holds the owner's `sub` (and their email
 at the time, so admins can tell whose it is), the type, the validated variables with defaults applied (JSON), the
 tfvars its apply used (JSON, saved by the runner for destroy, never returned by an endpoint), the status, the
-non-sensitive outputs (JSON), the conversation it came from and when it was created, last changed and
-confirmed. Its ID is a GUID, always rendered lowercase (`3f2b8c1e-5d4a-...`): that's the form the `rp-<requestId>`
+non-sensitive outputs (JSON), the [project](#projects) it belongs to, the conversation it came from and when it was
+created, last changed and confirmed. Its ID is a GUID, always rendered lowercase (`3f2b8c1e-5d4a-...`): that's the form the `rp-<requestId>`
 tag and the manifests' droplet-reference patterns use.
 
 | Status | Meaning | Moved there by |
@@ -176,15 +180,16 @@ certainly does, so a failed request can always be destroyed (again). `Queued` ca
 already have picked it up. `Status` is also an EF Core concurrency token, so if two changes race (a confirm and a
 cancel, or the runner), the second fails with 409 instead of overwriting the first.
 
-**Proposing.** `IProvisioningRequestService.ProposeAsync(owner, type, variables, conversationId)` is what
-`propose_request` calls. It validates the variables with `ICatalogService.ValidateVariables` (which includes the
-manifest's `atLeastOneOf` rules, see [catalog.md](catalog.md#rules-across-variables)), then checks every
-reference (see [below](#dependencies)), and creates the request in `AwaitingConfirmation` with its dependencies, or
-returns the errors by field path for the agent to fix. There is no HTTP endpoint for proposing: only the agent creates requests.
+**Proposing.** `IProvisioningRequestService.ProposeAsync(owner, type, variables, projectId, conversationId)` is what
+`propose_request` and `POST /api/projects` call. It validates the variables with `ICatalogService.ValidateVariables`
+(which includes the manifest's `atLeastOneOf` rules, see [catalog.md](catalog.md#rules-across-variables)), then
+checks the [project](#projects) and every reference (see [below](#dependencies)), and creates the request in
+`AwaitingConfirmation` with its dependencies (and, for a `project` request, its project), or returns the errors by
+field path for the agent to fix. There is no HTTP endpoint for proposing other types: only the agent creates them.
 
-**Confirming** checks again, because time passes between propose and confirm: the variables and references are
-re-validated (a referenced request may have been cancelled or destroyed meanwhile; the API answers 422 with the
-errors), then the [spend caps](#spend-caps), then the request moves to `Queued` and onto the runner's queue. A request
+**Confirming** checks again, because time passes between propose and confirm: the variables, project and references
+are re-validated (a project or referenced request may have been cancelled or destroyed meanwhile; the API answers 422
+with the errors), then the [spend caps](#spend-caps), then the request moves to `Queued` and onto the runner's queue. A request
 that depends on one still awaiting confirmation can't be confirmed on its own (409 naming it). **Confirm all**
 (`POST /api/requests/confirm`, `{"requestIds": [...]}`, up to 20) confirms a set together: every one is checked, the
 spend caps are checked for the whole set, and they're queued in dependency order, all or none; with several, each
@@ -211,6 +216,11 @@ clicks **Reveal secrets**.
 | `POST .../confirm`, `POST .../cancel`, `POST /api/requests/confirm` | allowed | 404 | 403 |
 | `POST .../destroy` | allowed | 404 | allowed |
 | `GET .../sensitive-outputs` | allowed | 404 | 403 |
+| `GET /api/projects` | their own | their own | every user's, with `ownerId` and `ownerEmail` |
+| `GET /api/projects/{id}` | 200 | 404 | 200 |
+| Putting a request in a project | allowed | refused, as if it didn't exist | refused, as if it didn't exist |
+
+`POST /api/projects` always creates the caller's own project, admins included.
 
 Admins can see everything, and their one extra power over other users' cloud resources is taking them down: an admin
 can destroy a resource someone left running, but can't create, confirm or reference anything in their name. A request
@@ -225,8 +235,9 @@ of that type **owned by the requesting user**, admins included, that is pending 
 users' request IDs; the user's own request that's failed, cancelled, being destroyed or destroyed gets an error naming
 its status.
 
-Each referenced request becomes a **dependency** (`RequestDependencies`: request → the request it depends on). A
-request only references earlier ones, so there are no cycles. Dependencies mean:
+Each referenced request becomes a **dependency** (`RequestDependencies`: request → the request it depends on), and so
+does the `project` request backing the request's [project](#projects), recorded automatically at propose. A request
+only references earlier ones, so there are no cycles. Dependencies mean:
 
 - **Provisioned in order.** A queued request waits until everything it depends on has `Succeeded`; the runner queues
   it again whenever one of them finishes. If one fails, is cancelled, or is being or has been destroyed, it moves
@@ -236,6 +247,58 @@ request only references earlier ones, so there are no cycles. Dependencies mean:
   `Queued`, `Applying`, `Succeeded`, `Failed` (it may have created something) or `Destroying`.
 - **Shown both ways.** Every request response has `dependsOn` and `dependents`: `{id, type, displayName, name,
   status}` for each.
+
+## Projects
+
+A project is the top level that holds a user's resources together. **Every request belongs to exactly one project**,
+except the `project` request that backs it: a project is always backed by a request of the catalog's `project` type,
+so its DigitalOcean project, status, logs, Terraform state and outputs come from the existing runner like any other
+request's.
+
+A `Project` (table `Projects`) holds the owner's `sub` and email, the name, description, purpose and environment
+(copied from its request's variables), when it was created, and `ProjectRequestId`, the request that backs it.
+`ProvisioningRequest.ProjectId` is the project a request belongs to: required for every type but `project`, and null
+on the `project` request itself. The service enforces that, not the database, so a request from before projects
+(which has none) can still be read and destroyed, but not confirmed. The `AddProjects` migration gave each existing
+`project` request that wasn't cancelled or destroyed its project, and moved the requests that named one through the
+old `project_request_id` variable into it.
+
+**Creating one.** A project's row is created with its request, whenever a `project` request is proposed:
+
+- **in chat:** the agent proposes a `project` request, and the user confirms it on the card like any other;
+- **from the UI:** `POST /api/projects` with `{"variables": {"name": "shop", ...}}` proposes the request and confirms
+  it in one step, because the form's submit *is* the confirmation. The variables are checked against the `project`
+  manifest (422 with `errors` by field), and the confirm makes the usual checks, spend caps included (projects are
+  free, so they never hit them). If the confirm is refused, the request and project are deleted, so nothing is left
+  awaiting a confirmation that already happened. It answers 201 with the project.
+
+**Joining one.** Proposing any other type takes a project ID (reported as `project_id` in errors), which must be one of
+the user's own projects, admins included, whose request is pending or provisioned, under the same rules as
+[references](#dependencies): someone else's project and a missing one get the same error. A `RequestDependency` on the
+project's request is recorded automatically, so the project is provisioned first, and confirm refuses a member on its
+own while its project still awaits confirmation. A `project` request takes no project.
+
+**Status.** A project's status is its request's (`AwaitingConfirmation` through `Succeeded`, `Failed`,
+`Destroying`). When the request is cancelled or destroyed, the project is gone: it's left out of `GET /api/projects`,
+`GET /api/projects/{id}` answers 404, and nothing more can be put in it. Destroying the project's request is refused
+while anything in it may still exist, as for any dependency.
+
+**Endpoints** (ownership as in [the table above](#ownership)):
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET /api/projects` | The user's projects (every user's for an admin), newest first: `{id, ownerId, ownerEmail, name, description, purpose, environment, status, projectRequestId, resourceCount, createdAt}`. `resourceCount` leaves out cancelled and destroyed requests. |
+| `GET /api/projects/{id}` | The same, plus `request` (the `project` request) and `resources` (every request in it, newest first, each with `dependsOn` and `dependents`). |
+| `POST /api/projects` | Creates a project from the form, as above. |
+| `GET /api/requests?projectId=<id>` | The requests in a project and the one that backs it, within what the user can see. |
+
+Every request response carries `project: {id, name}`: the project it belongs to, or for a `project` request, the one
+it backs (null only for a request from before projects).
+
+**In Terraform.** The runner passes the project's DigitalOcean ID (its request's `id` output) as `rp_project_id` to
+every module that declares it, so droplets, Postgres clusters and Spaces buckets go in the DigitalOcean project
+([catalog.md](catalog.md#variables)). Firewalls can't go in a DigitalOcean project, so a firewall belongs to its app
+project only.
 
 ## Spend caps
 
