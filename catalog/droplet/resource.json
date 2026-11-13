@@ -45,14 +45,6 @@
       "required": true,
       "pattern": "^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)) [A-Za-z0-9+/]+={0,3}( [^\\r\\n]*)?$",
       "maxLength": 2000
-    },
-    {
-      "name": "project_request_id",
-      "label": "Project",
-      "type": "string",
-      "references": "project",
-      "description": "Optional: the request ID of one of the user's projects to put this in. Without one, it goes in the account's default project.",
-      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
     }
   ],
   "outputs": [

@@ -40,15 +40,8 @@ variable "rp_name_suffix" {
   }
 }
 
-# The request ID of one of the user's projects (from the request; the API checks it's theirs).
-# The module doesn't use it: the runner reads that project's id output and sets rp_project_id.
-variable "project_request_id" {
-  type    = string
-  default = null
-}
-
-# Set by the runner from project_request_id, not the request: the project's DigitalOcean ID, or
-# "" for the account's default project.
+# Set by the runner, not the request: the DigitalOcean ID of the app project the request belongs
+# to (its project request's id output), or "" for the account's default project.
 variable "rp_project_id" {
   type    = string
   default = ""
