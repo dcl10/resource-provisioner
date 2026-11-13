@@ -47,8 +47,9 @@ The job never sees the user or the LLM: everything it runs comes from the vetted
 
 ### Dependencies
 
-A request that references others ([architecture.md](architecture.md#dependencies)) is only applied once all of them
-have `Succeeded`. When the runner takes a queued request, it first reads what it depends on:
+A request that references others, or belongs to a project ([architecture.md](architecture.md#dependencies)), is only
+applied once all of them, its project's request included, have `Succeeded`. When the runner takes a queued request, it
+first reads what it depends on:
 
 - **All succeeded:** it's applied as above.
 - **Some still pending** (queued or applying): it's left `Queued`, and the API log notes it's waiting. After every job,
@@ -101,7 +102,7 @@ Each job prepares `<Workspaces:Root>/<requestId>/` afresh, deleting whatever an 
 | File | What it is |
 | --- | --- |
 | the module's files | copied from `catalog/<type>/`, leaving out `resource.json`, `.terraform/`, state, plans and tfvars files |
-| `terraform.tfvars.json` | the request's variables (defaults applied), with the runner's `rp_name_suffix` and `rp_tags` (and any variables taken from requests it depends on) laid over them, so a value smuggled into the variables can't replace the forced tags. Built by the apply and saved on the request as `TerraformVariables`; destroy writes the saved copy, so it uses exactly what the apply did, even if the request's dependencies have gone since. |
+| `terraform.tfvars.json` | the request's variables (defaults applied), with the runner's `rp_name_suffix` and `rp_tags` (and the variables taken from requests it depends on: `rp_project_id`, its project's DigitalOcean ID, if the module declares it, and any reference's `rp_<x>_id`) laid over them, so a value smuggled into the variables can't replace the forced tags. Built by the apply and saved on the request as `TerraformVariables`; destroy writes the saved copy, so it uses exactly what the apply did, even if the request's dependencies have gone since. |
 | `rp_backend.tf` | `terraform { backend "pg" {} }`, added by the runner; its settings come from the environment, so it holds no credentials |
 | `plan.tfplan` | the saved plan that apply runs |
 
