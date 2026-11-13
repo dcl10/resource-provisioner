@@ -33,3 +33,9 @@ variable "rp_tags" {
   type    = list(string)
   default = []
 }
+
+# Set by the runner from the request's project, like a droplet's.
+variable "rp_project_id" {
+  type    = string
+  default = ""
+}
