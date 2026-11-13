@@ -83,14 +83,6 @@
         "pattern": "^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12][0-9]|[89])$",
         "maxLength": 18
       }
-    },
-    {
-      "name": "project_request_id",
-      "label": "Project",
-      "type": "string",
-      "references": "project",
-      "description": "Optional: the request ID of one of the user's projects to put this in. Without one, it goes in the account's default project.",
-      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
     }
   ],
   "atLeastOneOf": [
