@@ -27,17 +27,73 @@ public class TerraformStateStoreTests(ApiFactory factory) : IClassFixture<ApiFac
     using var scope = factory.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-    // The table Terraform's pg backend creates on first use, with one row per workspace.
+    await AddState(db, Guid.Parse(withState));
+    var store = new TerraformStateStore(db);
+
+    Assert.True(await store.HasStateAsync(Guid.Parse(withState), CancellationToken.None));
+    Assert.False(await store.HasStateAsync(Guid.NewGuid(), CancellationToken.None));
+  }
+
+  [Fact]
+  public async Task DeleteStateAsync_DeletesOnlyThatWorkspacesState()
+  {
+    var (deleted, kept) = (Guid.NewGuid(), Guid.NewGuid());
+    using var scope = factory.Services.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await AddState(db, deleted);
+    await AddState(db, kept);
+    var store = new TerraformStateStore(db);
+
+    await store.DeleteStateAsync(deleted, CancellationToken.None);
+
+    Assert.False(await store.HasStateAsync(deleted, CancellationToken.None));
+    Assert.True(await store.HasStateAsync(kept, CancellationToken.None));
+  }
+
+  [Fact]
+  public async Task DeleteStateAsync_IsUndone_WhenItsTransactionRollsBack()
+  {
+    var requestId = Guid.NewGuid();
+    using var scope = factory.Services.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await AddState(db, requestId);
+    var store = new TerraformStateStore(db);
+
+    await using (var transaction = await db.Database.BeginTransactionAsync())
+    {
+      await store.DeleteStateAsync(requestId, CancellationToken.None);
+      Assert.False(await store.HasStateAsync(requestId, CancellationToken.None));
+      await transaction.RollbackAsync();
+    }
+
+    Assert.True(await store.HasStateAsync(requestId, CancellationToken.None));
+  }
+
+  [Fact]
+  public async Task DeleteStateAsync_DoesNothing_BeforeTerraformCreatesTheTable()
+  {
+    await using var fresh = new ApiFactory();
+    using var scope = fresh.Services.CreateScope();
+    var store = new TerraformStateStore(scope.ServiceProvider.GetRequiredService<AppDbContext>());
+
+    await store.DeleteStateAsync(Guid.NewGuid(), CancellationToken.None);
+  }
+
+  /// <summary>
+  /// Gives a request state in the table Terraform's pg backend creates on first use, with one row per workspace.
+  /// </summary>
+  /// <param name="db">The app database.</param>
+  /// <param name="requestId">The request, whose ID is its workspace's name.</param>
+  /// <returns>A task that completes once it's saved.</returns>
+  internal static async Task AddState(AppDbContext db, Guid requestId)
+  {
     await db.Database.ExecuteSqlRawAsync(
       """
       CREATE SCHEMA IF NOT EXISTS terraform_state;
       CREATE TABLE IF NOT EXISTS terraform_state.states (id bigserial PRIMARY KEY, name text UNIQUE, data text);
       """);
-    await db.Database.ExecuteSqlAsync($"INSERT INTO terraform_state.states (name, data) VALUES ({withState}, '')");
-    var store = new TerraformStateStore(db);
-
-    Assert.True(await store.HasStateAsync(Guid.Parse(withState), CancellationToken.None));
-    Assert.False(await store.HasStateAsync(Guid.NewGuid(), CancellationToken.None));
+    var name = requestId.ToString();
+    await db.Database.ExecuteSqlAsync($"INSERT INTO terraform_state.states (name, data) VALUES ({name}, '')");
   }
 
   [Fact]
