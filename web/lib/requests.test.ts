@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { canDestroy, followLogs, formatValue } from "@/lib/requests";
+import {
+  cancelRequest,
+  canDestroy,
+  followLogs,
+  formatValue,
+} from "@/lib/requests";
 import { sseEvent, sseResponse } from "@/lib/test-sse";
 
 describe("followLogs", () => {
@@ -43,7 +48,7 @@ describe("followLogs", () => {
 
   it("resumes after the last line it has", async () => {
     const fetchMock = vi.fn(async () =>
-      sseResponse([sseEvent("end", { status: "Destroyed" })]),
+      sseResponse([sseEvent("end", { status: "Failed" })]),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -56,6 +61,42 @@ describe("followLogs", () => {
       }),
     );
   });
+
+  it("resolves with null when the request is destroyed, and so deleted, while following", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        sseResponse([
+          sseEvent("status", { status: "Destroying" }),
+          sseEvent("deleted", {}),
+        ]),
+      ),
+    );
+
+    const final = await followLogs("req-1", 0, {
+      onLine: vi.fn(),
+      onStatus: vi.fn(),
+    });
+
+    expect(final).toBeNull();
+  });
+});
+
+describe("cancelRequest", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("posts the cancel and resolves once the API has deleted the request", async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(cancelRequest("req-1")).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/proxy/requests/req-1/cancel",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
 });
 
 describe("canDestroy", () => {
@@ -66,8 +107,6 @@ describe("canDestroy", () => {
     ["Queued", false],
     ["Applying", false],
     ["Destroying", false],
-    ["Destroyed", false],
-    ["Cancelled", false],
   ] as const)("is %s for %s", (status, expected) => {
     expect(canDestroy(status)).toBe(expected);
   });

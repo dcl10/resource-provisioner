@@ -63,7 +63,7 @@ web/
     ├── auth/                   # Auth.js config, Keycloak token handling (keycloak-url.ts: the internal address in
     │                           # Docker), session helpers, server actions
     ├── api-proxy.ts            # URL and header mapping for the API proxy
-    ├── api.ts                  # apiFetch, ApiError, readApiError, retryUnlessClientError
+    ├── api.ts                  # apiFetch, ApiError, readApiError, retryUnlessClientError, isNotFound
     ├── catalog.ts              # resource types (for output descriptions and which outputs are secret)
     ├── chat.ts                 # conversation types and calls; sendMessage streams a reply
     ├── requests.ts             # request types, status helpers, calls; followLogs streams a request's log
@@ -115,7 +115,9 @@ Assistant text is Markdown, rendered by `Markdown` with `remark-gfm` and `rehype
 out on a `project` request's own card, whose name is already in the table), and its cost hint. It reads the
 request's current status (`GET /api/requests/<id>`), so an old proposal shows where it got to. While it awaits
 confirmation, **Confirm** and **Cancel** call `POST /api/requests/<id>/confirm` or `/cancel`. Confirming shows a toast
-with a **View request** action and swaps the buttons for a link to the request page. Errors show on the card and in a
+with a **View request** action and swaps the buttons for a link to the request page. Cancelling deletes the request
+(the API answers 204), so the card re-reads it, gets 404 and says **No longer exists**, with no buttons or link; so
+does any card whose request has been cancelled or destroyed since. Errors show on the card and in a
 toast; over an active-request limit, the card explains it under "You're at your limit" with the API's advice. A
 proposal that references others says **Runs after** with links to them; confirming it before them is refused by the API
 with a message saying which to confirm first.
@@ -123,7 +125,7 @@ with a message saying which to confirm first.
 When a reply has two or more proposals still awaiting confirmation, `ConfirmAllButton` offers **Confirm all (N)**,
 which calls `POST /api/requests/confirm` with their IDs: the API checks the spend limits for all of them and queues
 them in dependency order, or confirms none. It reads the statuses from the same queries as the cards, so both update
-together.
+together, and leaves out any that no longer exist.
 
 ## The requests pages
 
@@ -144,9 +146,14 @@ still exist, Destroy is replaced by the requests to destroy first.
   secrets**, which is the only time `GET /api/requests/<id>/sensitive-outputs` is called. **Hide secrets** drops them
   from the query cache, and the response is never cached by the browser.
 - **Destroy** is offered to the owner or an admin once the request is Provisioned or Failed. It asks for confirmation
-  in an alert dialog, then the badge and the log follow the destroy.
+  in an alert dialog, then the badge and the log follow the destroy. Once it's destroyed, the API deletes the request:
+  the log stream ends with a `deleted` event, the page re-reads the request and gets 404, and since it had the request
+  before, it toasts "… was destroyed" and goes back to `/requests` with `router.replace` (to the request's project once
+  projects have a page of their own).
+- **Lists never show cancelled or destroyed requests**, which the API deletes, and `StatusBadge` has no state for them.
+  A request the user opens that was already gone, or was never theirs, says it doesn't exist.
 - A request or conversation the user can't see (404) isn't retried: `retryUnlessClientError` retries only server and
-  network errors.
+  network errors. `isNotFound` in `lib/api.ts` tells a 404 apart.
 
 ## Stack
 

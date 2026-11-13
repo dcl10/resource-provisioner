@@ -6,12 +6,12 @@ using Requests;
 
 /// <summary>
 /// Projects: listing and reading them, and creating one from a form. A project's status is its <c>project</c>
-/// request's, and once that request is cancelled or destroyed the project is gone. Ownership matches requests': users
-/// see their own projects, admins see everyone's, and anyone else's answers as missing.
+/// request's, and once that request is cancelled or destroyed the project is deleted with it. Ownership matches
+/// requests': users see their own projects, admins see everyone's, and anyone else's answers as missing.
 /// </summary>
 public interface IProjectService
 {
-  /// <summary>Lists the user's projects, or every user's for an admin, newest first. Gone projects are left out.</summary>
+  /// <summary>Lists the user's projects, or every user's for an admin, newest first.</summary>
   /// <param name="user">The signed-in user.</param>
   /// <param name="cancellationToken">Cancels the call.</param>
   /// <returns>The projects.</returns>
@@ -23,7 +23,8 @@ public interface IProjectService
   /// <param name="cancellationToken">Cancels the call.</param>
   /// <returns>The project.</returns>
   /// <exception cref="KeyNotFoundException">
-  /// No such project, it's gone, or it isn't the user's and they aren't an admin.
+  /// No such project (its request may have been cancelled or destroyed), or it isn't the user's and they aren't an
+  /// admin.
   /// </exception>
   Task<ProjectDetailResponse> GetAsync(Guid id, RequestUser user, CancellationToken cancellationToken = default);
 

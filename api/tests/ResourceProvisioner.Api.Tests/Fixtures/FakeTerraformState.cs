@@ -21,12 +21,30 @@ public class FakeTerraformState : ITerraformStateStore
   /// <param name="requestId">The request.</param>
   public void Add(Guid requestId) => _requests[requestId] = true;
 
-  /// <summary>Forgets every request's state.</summary>
-  public void Reset() => _requests.Clear();
+  /// <summary>
+  /// The requests whose state <see cref="DeleteStateAsync"/> was asked to delete, whether or not they had any. Not
+  /// transactional, unlike the real store: a delete stays recorded even if the transaction it was in rolls back.
+  /// </summary>
+  public ConcurrentBag<Guid> Deleted { get; } = [];
+
+  /// <summary>Forgets every request's state, and every delete.</summary>
+  public void Reset()
+  {
+    _requests.Clear();
+    Deleted.Clear();
+  }
 
   /// <inheritdoc />
   public Task<bool> HasStateAsync(Guid requestId, CancellationToken cancellationToken) =>
     Task.FromResult(_requests.ContainsKey(requestId));
+
+  /// <inheritdoc />
+  public Task DeleteStateAsync(Guid requestId, CancellationToken cancellationToken)
+  {
+    _requests.TryRemove(requestId, out _);
+    Deleted.Add(requestId);
+    return Task.CompletedTask;
+  }
 
   /// <inheritdoc />
   public IReadOnlyDictionary<string, string> BackendEnvironment() =>

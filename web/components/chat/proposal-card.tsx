@@ -13,6 +13,7 @@ import {
   requestsQueryKey,
   useRequest,
 } from "@/components/requests/use-requests";
+import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Card,
@@ -24,7 +25,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
-import { ApiError } from "@/lib/api";
+import { ApiError, isNotFound } from "@/lib/api";
 import type { Proposal } from "@/lib/chat";
 import {
   cancelRequest,
@@ -60,7 +61,8 @@ function toProblem(error: unknown): CardProblem {
 /**
  * The confirmation card for a request the agent proposed: the resource type, its variables, the cost hint, and
  * Confirm and Cancel buttons while it awaits confirmation. Confirming is the only thing that starts provisioning.
- * The card reads the request's current status, so a proposal confirmed or cancelled earlier shows that instead.
+ * The card reads the request's current status, so a proposal confirmed earlier shows where it got to, and one
+ * cancelled or destroyed since (and so deleted) says it no longer exists.
  * @param proposal - the proposed request
  * @returns the card
  */
@@ -104,17 +106,28 @@ export function ProposalCard({ proposal }: { proposal: Proposal }) {
   });
   const cancel = useMutation({
     mutationFn: () => cancelRequest(requestId),
-    onSuccess: (updated) => {
-      onSuccess(updated);
+    // The API deletes a cancelled request, so re-reading it now answers 404 and the card says it no longer exists.
+    // Returned, so the buttons stay disabled until that re-read is in.
+    onSuccess: () => {
+      setProblem(null);
       toast(`${proposal.displayName} proposal cancelled`);
+      void queryClient.invalidateQueries({
+        queryKey: requestsQueryKey,
+        exact: true,
+      });
+      return queryClient.invalidateQueries({
+        queryKey: requestQueryKey(requestId),
+      });
     },
     onError,
   });
 
-  const status = request.data?.status;
+  // Cancelled or destroyed since it was proposed, so deleted.
+  const gone = isNotFound(request.error);
+  const status = gone ? undefined : request.data?.status;
   const awaiting = status === "AwaitingConfirmation";
   // While the status loads, the same two buttons show disabled, so they don't change under the pointer.
-  const showActions = awaiting || request.isPending;
+  const showActions = !gone && (awaiting || request.isPending);
   const disabled = !awaiting || confirm.isPending || cancel.isPending;
 
   return (
@@ -125,7 +138,11 @@ export function ProposalCard({ proposal }: { proposal: Proposal }) {
           Proposed request · <span className="font-mono">{proposal.type}</span>
         </CardDescription>
         <CardAction>
-          {status ? <StatusBadge status={status} /> : null}
+          {gone ? (
+            <Badge variant="outline">No longer exists</Badge>
+          ) : status ? (
+            <StatusBadge status={status} />
+          ) : null}
         </CardAction>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
@@ -181,38 +198,45 @@ export function ProposalCard({ proposal }: { proposal: Proposal }) {
             <p className="text-muted-foreground">{problem.message}</p>
           </div>
         ) : null}
-        {request.isError ? (
+        {gone ? (
+          <p className="text-sm text-muted-foreground">
+            This request no longer exists: it was cancelled, or provisioned and
+            then destroyed.
+          </p>
+        ) : request.isError ? (
           <p className="text-sm text-muted-foreground">
             Couldn&apos;t load this request&apos;s status.
           </p>
         ) : null}
       </CardContent>
-      <CardFooter className="justify-end gap-2">
-        {showActions ? (
-          <>
-            <Button
-              variant="outline"
-              disabled={disabled}
-              onClick={() => cancel.mutate()}
+      {gone ? null : (
+        <CardFooter className="justify-end gap-2">
+          {showActions ? (
+            <>
+              <Button
+                variant="outline"
+                disabled={disabled}
+                onClick={() => cancel.mutate()}
+              >
+                <X />
+                Cancel
+              </Button>
+              <Button disabled={disabled} onClick={() => confirm.mutate()}>
+                <Check />
+                Confirm
+              </Button>
+            </>
+          ) : (
+            <Link
+              href={requestPath(requestId)}
+              className={buttonVariants({ variant: "outline" })}
             >
-              <X />
-              Cancel
-            </Button>
-            <Button disabled={disabled} onClick={() => confirm.mutate()}>
-              <Check />
-              Confirm
-            </Button>
-          </>
-        ) : (
-          <Link
-            href={requestPath(requestId)}
-            className={buttonVariants({ variant: "outline" })}
-          >
-            <ExternalLink />
-            View request
-          </Link>
-        )}
-      </CardFooter>
+              <ExternalLink />
+              View request
+            </Link>
+          )}
+        </CardFooter>
+      )}
     </Card>
   );
 }

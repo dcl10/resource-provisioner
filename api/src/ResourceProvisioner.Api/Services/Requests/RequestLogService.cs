@@ -51,10 +51,18 @@ public class RequestLogService(AppDbContext db, IOptions<RunnerOptions> options,
     while (true)
     {
       // Status before lines: a line written just before the job finished is then read on this pass or the next.
-      var status = await db.ProvisioningRequests.AsNoTracking()
+      var found = await db.ProvisioningRequests.AsNoTracking()
         .Where(x => x.Id == id)
-        .Select(x => x.Status)
-        .SingleAsync(cancellationToken);
+        .Select(x => (RequestStatus?)x.Status)
+        .SingleOrDefaultAsync(cancellationToken);
+
+      // Destroyed, so deleted with its log: there's nothing more to send.
+      if (found is not { } status)
+      {
+        yield return new RequestLogEvent(RequestLogEventKind.Deleted, null, null, null);
+        yield break;
+      }
+
       if (status != sent)
       {
         sent = status;

@@ -83,11 +83,11 @@ public class SequencedProvisioningTests : IClassFixture<HighLimitApiFactory>
   public async Task ConfirmMany_ConfirmsNothing_WhenOneIsNotAwaitingConfirmation()
   {
     var waiting = await _factory.SeedRequestAsync(_userId, RequestStatus.AwaitingConfirmation);
-    var cancelled = await _factory.SeedRequestAsync(_userId, RequestStatus.Cancelled);
+    var queued = await _factory.SeedRequestAsync(_userId, RequestStatus.Queued);
 
     var response = await User.PostAsJsonAsync(
       $"{Route}/confirm",
-      new { requestIds = new[] { waiting.Id, cancelled.Id } });
+      new { requestIds = new[] { waiting.Id, queued.Id } });
 
     Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
     Assert.Equal(RequestStatus.AwaitingConfirmation, (await _factory.FindRequestAsync(waiting.Id))!.Status);
@@ -150,17 +150,46 @@ public class SequencedProvisioningTests : IClassFixture<HighLimitApiFactory>
     Assert.Equal(RequestStatus.Succeeded, (await _factory.FindRequestAsync(server.Id))!.Status);
   }
 
-  [Theory]
-  [InlineData(RequestStatus.AwaitingConfirmation)]
-  [InlineData(RequestStatus.Cancelled)]
-  [InlineData(RequestStatus.Destroyed)]
-  public async Task Destroy_IsAllowed_OnceNothingDependingOnItCanExist(RequestStatus databaseStatus)
+  [Fact]
+  public async Task Destroy_IsAllowed_WhenOnlyAProposalDependsOnIt()
   {
-    var (server, _) = await SeedPair(RequestStatus.Succeeded, databaseStatus);
+    var (server, _) = await SeedPair(RequestStatus.Succeeded, RequestStatus.AwaitingConfirmation);
 
     var response = await User.PostAsync($"{Route}/{server.Id}/destroy", null);
 
     Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+  }
+
+  [Fact]
+  public async Task Destroy_IsAllowed_OnceWhatDependedOnItIsDestroyed()
+  {
+    var (server, database) = await SeedPair(RequestStatus.Succeeded, RequestStatus.Destroying);
+    await Process(database.Id);
+
+    var response = await User.PostAsync($"{Route}/{server.Id}/destroy", null);
+
+    Assert.Null(await _factory.FindRequestAsync(database.Id));
+    Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    var body = await response.Content.ReadFromJsonAsync<ProvisioningRequestResponse>();
+    Assert.Empty(body!.Dependents);
+  }
+
+  [Fact]
+  public async Task Destroying_ADependency_UnlinksTheProposalsThatReferencedIt_SoTheyCantBeConfirmed()
+  {
+    var (server, database) = await SeedPair(RequestStatus.Destroying, RequestStatus.AwaitingConfirmation);
+
+    await Process(server.Id);
+
+    Assert.Null(await _factory.FindRequestAsync(server.Id));
+    var view = await User.GetFromJsonAsync<ProvisioningRequestResponse>($"{Route}/{database.Id}");
+    Assert.Empty(view!.DependsOn);
+    var confirm = await User.PostAsync($"{Route}/{database.Id}/confirm", null);
+    Assert.Equal(HttpStatusCode.UnprocessableEntity, confirm.StatusCode);
+    var problem = await confirm.Content.ReadFromJsonAsync<ValidationProblemDetails>();
+    Assert.Equal(
+      [$"'{server.Id}' isn't the request ID of one of your Test server requests."],
+      problem!.Errors["allowed_droplet_request_ids[0]"]);
   }
 
   [Fact]
@@ -194,8 +223,7 @@ public class SequencedProvisioningTests : IClassFixture<HighLimitApiFactory>
 
   [Theory]
   [InlineData(RequestStatus.Failed)]
-  [InlineData(RequestStatus.Cancelled)]
-  [InlineData(RequestStatus.Destroyed)]
+  [InlineData(RequestStatus.Destroying)]
   public async Task Runner_FailsADependent_WithoutRunning_WhenItsDependencyWontSucceed(RequestStatus serverStatus)
   {
     var (server, database) = await SeedPair(serverStatus, RequestStatus.Queued);

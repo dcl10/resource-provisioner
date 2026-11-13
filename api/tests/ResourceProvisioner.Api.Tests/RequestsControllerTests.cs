@@ -117,17 +117,37 @@ public class RequestsControllerTests(HighLimitApiFactory factory) : IClassFixtur
   }
 
   [Fact]
-  public async Task Confirm_Returns422_WhenTheProjectIsGone()
+  public async Task Confirm_Returns422_WhenTheProjectIsBeingDestroyed()
   {
-    var project = await factory.SeedProjectAsync(_userId, RequestStatus.Destroyed, name: "shop");
+    var project = await factory.SeedProjectAsync(_userId, RequestStatus.Destroying, name: "shop");
     var server = await factory.SeedRequestAsync(_userId, RequestStatus.AwaitingConfirmation, projectId: project.Id);
 
     var response = await User.PostAsync($"{Route}/{server.Id}/confirm", null);
 
     Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     var problem = await response.Content.ReadFromJsonAsync<ValidationProblemDetails>();
-    Assert.Equal(["Project \"shop\" is Destroyed; only pending or provisioned projects can be used."],
+    Assert.Equal(["Project \"shop\" is Destroying; only pending or provisioned projects can be used."],
       problem!.Errors["project_id"]);
+  }
+
+  [Fact]
+  public async Task Confirm_Returns422_WhenTheProjectWasDestroyed()
+  {
+    var project = await factory.SeedProjectAsync(_userId, RequestStatus.Destroying, name: "shop");
+    var server = await factory.SeedRequestAsync(_userId, RequestStatus.AwaitingConfirmation, projectId: project.Id);
+    await factory.AddDependencyAsync(server.Id, project.ProjectRequestId);
+    using (var scope = factory.Services.CreateScope())
+    {
+      await scope.ServiceProvider.GetRequiredService<ITerraformJobProcessor>()
+        .RunAsync(project.ProjectRequestId, CancellationToken.None);
+    }
+
+    var response = await User.PostAsync($"{Route}/{server.Id}/confirm", null);
+
+    Assert.Null(await factory.FindRequestAsync(project.ProjectRequestId));
+    Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+    var problem = await response.Content.ReadFromJsonAsync<ValidationProblemDetails>();
+    Assert.StartsWith("It isn't in a project any more", Assert.Single(problem!.Errors["project_id"]));
   }
 
   [Fact]
@@ -211,8 +231,6 @@ public class RequestsControllerTests(HighLimitApiFactory factory) : IClassFixtur
   [InlineData(RequestStatus.Succeeded)]
   [InlineData(RequestStatus.Failed)]
   [InlineData(RequestStatus.Destroying)]
-  [InlineData(RequestStatus.Destroyed)]
-  [InlineData(RequestStatus.Cancelled)]
   public async Task Confirm_ReturnsConflict_WhenNotAwaitingConfirmation(RequestStatus status)
   {
     var request = await factory.SeedRequestAsync(_userId, status);
@@ -257,8 +275,6 @@ public class RequestsControllerTests(HighLimitApiFactory factory) : IClassFixtur
   [InlineData(RequestStatus.Queued)]
   [InlineData(RequestStatus.Applying)]
   [InlineData(RequestStatus.Destroying)]
-  [InlineData(RequestStatus.Destroyed)]
-  [InlineData(RequestStatus.Cancelled)]
   public async Task Destroy_ReturnsConflict_WhenNotSucceededOrFailed(RequestStatus status)
   {
     var request = await factory.SeedRequestAsync(_userId, status);
@@ -314,7 +330,7 @@ public class RequestsControllerTests(HighLimitApiFactory factory) : IClassFixtur
         .RunAsync(active[0].Id, CancellationToken.None);
     }
 
-    Assert.Equal(RequestStatus.Destroyed, (await factory.FindRequestAsync(active[0].Id))!.Status);
+    Assert.Null(await factory.FindRequestAsync(active[0].Id));
     Assert.Equal(HttpStatusCode.OK, (await User.PostAsync($"{Route}/{next.Id}/confirm", null)).StatusCode);
   }
 
@@ -449,24 +465,27 @@ public class RequestsControllerTests(HighLimitApiFactory factory) : IClassFixtur
   }
 
   [Fact]
-  public async Task Cancel_CancelsRequest_ForOwner()
+  public async Task Cancel_DeletesRequest_ForOwner()
   {
     var request = await factory.SeedRequestAsync(_userId, RequestStatus.AwaitingConfirmation);
 
     var response = await User.PostAsync($"{Route}/{request.Id}/cancel", null);
 
-    Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-    Assert.Equal(RequestStatus.Cancelled, (await factory.FindRequestAsync(request.Id))!.Status);
-
-    var confirm = await User.PostAsync($"{Route}/{request.Id}/confirm", null);
-    Assert.Equal(HttpStatusCode.Conflict, confirm.StatusCode);
+    Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+    Assert.Null(await factory.FindRequestAsync(request.Id));
+    Assert.Equal(HttpStatusCode.NotFound, (await User.GetAsync($"{Route}/{request.Id}")).StatusCode);
+    Assert.Equal(HttpStatusCode.NotFound, (await User.PostAsync($"{Route}/{request.Id}/confirm", null)).StatusCode);
+    Assert.Equal(HttpStatusCode.NotFound, (await User.PostAsync($"{Route}/{request.Id}/cancel", null)).StatusCode);
+    var list = await User.GetFromJsonAsync<List<ProvisioningRequestResponse>>(Route);
+    Assert.DoesNotContain(list!, r => r.Id == request.Id);
   }
 
   [Theory]
   [InlineData(RequestStatus.Queued)]
   [InlineData(RequestStatus.Applying)]
   [InlineData(RequestStatus.Succeeded)]
-  [InlineData(RequestStatus.Cancelled)]
+  [InlineData(RequestStatus.Failed)]
+  [InlineData(RequestStatus.Destroying)]
   public async Task Cancel_ReturnsConflict_WhenNotAwaitingConfirmation(RequestStatus status)
   {
     var request = await factory.SeedRequestAsync(_userId, status);
@@ -475,6 +494,17 @@ public class RequestsControllerTests(HighLimitApiFactory factory) : IClassFixtur
 
     Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
     Assert.Equal(status, (await factory.FindRequestAsync(request.Id))!.Status);
+  }
+
+  [Fact]
+  public async Task Cancel_ReturnsForbidden_ForAdminOnAnotherUsersRequest()
+  {
+    var others = await factory.SeedRequestAsync("someone-else", RequestStatus.AwaitingConfirmation);
+
+    var response = await factory.CreateAdminClient().PostAsync($"{Route}/{others.Id}/cancel", null);
+
+    Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    Assert.NotNull(await factory.FindRequestAsync(others.Id));
   }
 
   [Fact]

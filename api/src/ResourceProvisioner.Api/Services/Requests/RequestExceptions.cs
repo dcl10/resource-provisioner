@@ -1,7 +1,7 @@
 namespace ResourceProvisioner.Api.Services.Requests;
 
 /// <summary>
-/// The action doesn't fit the request's current status (confirming a cancelled request), or the request changed
+/// The action doesn't fit the request's current status (confirming a queued request), or the request changed
 /// while the action ran. The API answers 409.
 /// </summary>
 /// <param name="message">Why, in words the user can act on.</param>

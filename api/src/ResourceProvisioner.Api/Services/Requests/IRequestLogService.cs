@@ -7,7 +7,8 @@ public interface IRequestLogService
 {
   /// <summary>
   /// Follows a request's log: its status, every line after <paramref name="afterId"/>, then new lines and status
-  /// changes as the runner writes them, ending with an end event once no job is queued or running.
+  /// changes as the runner writes them, ending with an end event once no job is queued or running, or a deleted event
+  /// once the request has been destroyed and deleted.
   /// </summary>
   /// <param name="id">Request ID.</param>
   /// <param name="user">The signed-in user: the owner, or an admin.</param>

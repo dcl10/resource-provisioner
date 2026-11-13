@@ -1,12 +1,15 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Providers } from "@/components/providers";
 import { RequestDetail } from "@/components/requests/request-detail";
 import type { ProvisioningRequest } from "@/lib/requests";
 import { jsonResponse, testRequest } from "@/lib/test-requests";
 import { sseEvent, sseResponse } from "@/lib/test-sse";
+
+const replace = vi.fn();
+vi.mock("next/navigation", () => ({ useRouter: () => ({ replace }) }));
 
 const catalog = [
   {
@@ -64,6 +67,10 @@ function calledUrls() {
 }
 
 describe("RequestDetail", () => {
+  beforeEach(() => {
+    replace.mockReset();
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -198,7 +205,7 @@ describe("RequestDetail", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("offers Destroy once what depended on it is gone", async () => {
+  it("offers Destroy when only a proposal depends on it", async () => {
     mockApi(
       testRequest("Succeeded", {
         dependents: [
@@ -207,7 +214,7 @@ describe("RequestDetail", () => {
             type: "firewall",
             displayName: "Cloud firewall",
             name: "web-fw",
-            status: "Destroyed",
+            status: "AwaitingConfirmation",
           },
         ],
       }),
@@ -249,5 +256,34 @@ describe("RequestDetail", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "This request doesn't exist, or isn't yours.",
     );
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("goes back to the requests list once a destroy deletes the request", async () => {
+    let deleted = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/catalog")) return jsonResponse(catalog);
+        if (url.endsWith("/logs")) {
+          // The runner finishes the destroy and deletes the request while the log is open.
+          deleted = true;
+          return sseResponse([
+            sseEvent("status", { status: "Destroying" }),
+            sseEvent("deleted", {}),
+          ]);
+        }
+        return deleted
+          ? jsonResponse({ detail: "Request req-1 doesn't exist." }, 404)
+          : jsonResponse(testRequest("Destroying"));
+      }),
+    );
+    renderDetail();
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/requests"));
+    expect(
+      await screen.findByText(/Droplet web-1 was destroyed\. Taking you back/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

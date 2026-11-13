@@ -9,14 +9,12 @@ public class RequestStateMachineTests
   private static readonly (RequestStatus From, RequestStatus To)[] Legal =
   [
     (RequestStatus.AwaitingConfirmation, RequestStatus.Queued),
-    (RequestStatus.AwaitingConfirmation, RequestStatus.Cancelled),
     (RequestStatus.Queued, RequestStatus.Applying),
     (RequestStatus.Queued, RequestStatus.Failed),
     (RequestStatus.Applying, RequestStatus.Succeeded),
     (RequestStatus.Applying, RequestStatus.Failed),
     (RequestStatus.Succeeded, RequestStatus.Destroying),
     (RequestStatus.Failed, RequestStatus.Destroying),
-    (RequestStatus.Destroying, RequestStatus.Destroyed),
     (RequestStatus.Destroying, RequestStatus.Failed),
   ];
 
@@ -82,12 +80,16 @@ public class RequestStateMachineTests
     Assert.Equal(now, request.ConfirmedAt);
   }
 
-  [Theory]
-  [InlineData(RequestStatus.Destroyed)]
-  [InlineData(RequestStatus.Cancelled)]
-  public void NextStatuses_IsEmpty_ForFinalStatus(RequestStatus status)
+  [Fact]
+  public void NextStatuses_HasNoFinalStatus_SinceFinishedRequestsAreDeleted()
   {
-    Assert.Empty(RequestStateMachine.NextStatuses(status));
+    Assert.All(Enum.GetValues<RequestStatus>(), s => Assert.NotEmpty(RequestStateMachine.NextStatuses(s)));
+    Assert.Equal(
+      [
+        RequestStatus.AwaitingConfirmation, RequestStatus.Queued, RequestStatus.Applying, RequestStatus.Succeeded,
+        RequestStatus.Failed, RequestStatus.Destroying,
+      ],
+      Enum.GetValues<RequestStatus>());
   }
 
   [Fact]

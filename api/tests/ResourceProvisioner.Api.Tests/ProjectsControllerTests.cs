@@ -99,7 +99,6 @@ public class ProjectsControllerTests(HighLimitApiFactory factory) : IClassFixtur
     var newer = await factory.SeedProjectAsync(_userId, RequestStatus.AwaitingConfirmation, name: "newer");
     await factory.SeedRequestAsync(_userId, RequestStatus.Succeeded, projectId: older.Id);
     await factory.SeedRequestAsync(_userId, RequestStatus.Queued, projectId: older.Id);
-    await factory.SeedRequestAsync(_userId, RequestStatus.Destroyed, projectId: older.Id);
     var others = await factory.SeedProjectAsync("someone-else");
 
     var list = (await User.GetFromJsonAsync<List<ProjectResponse>>(Route))!;
@@ -110,12 +109,11 @@ public class ProjectsControllerTests(HighLimitApiFactory factory) : IClassFixtur
     Assert.DoesNotContain(list, p => p.Id == others.Id);
   }
 
-  [Theory]
-  [InlineData(RequestStatus.Cancelled)]
-  [InlineData(RequestStatus.Destroyed)]
-  public async Task List_LeavesOutAProject_WhoseRequestIsGone(RequestStatus status)
+  [Fact]
+  public async Task List_LeavesOutAProject_WhoseRequestWasCancelled()
   {
-    var gone = await factory.SeedProjectAsync(_userId, status);
+    var gone = await factory.SeedProjectAsync(_userId, RequestStatus.AwaitingConfirmation);
+    (await User.PostAsync($"/api/requests/{gone.ProjectRequestId}/cancel", null)).EnsureSuccessStatusCode();
 
     var list = await User.GetFromJsonAsync<List<ProjectResponse>>(Route);
 
@@ -175,12 +173,11 @@ public class ProjectsControllerTests(HighLimitApiFactory factory) : IClassFixtur
     Assert.Equal(server.Id, Assert.Single(body.Resources).Id);
   }
 
-  [Theory]
-  [InlineData(RequestStatus.Cancelled)]
-  [InlineData(RequestStatus.Destroyed)]
-  public async Task Get_ReturnsNotFound_WhenTheProjectsRequestIsGone(RequestStatus status)
+  [Fact]
+  public async Task Get_ReturnsNotFound_WhenTheProjectsRequestWasCancelled()
   {
-    var gone = await factory.SeedProjectAsync(_userId, status);
+    var gone = await factory.SeedProjectAsync(_userId, RequestStatus.AwaitingConfirmation);
+    (await User.PostAsync($"/api/requests/{gone.ProjectRequestId}/cancel", null)).EnsureSuccessStatusCode();
 
     var response = await User.GetAsync($"{Route}/{gone.Id}");
 

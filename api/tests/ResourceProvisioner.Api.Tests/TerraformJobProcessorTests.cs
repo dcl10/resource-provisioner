@@ -205,7 +205,7 @@ public class TerraformJobProcessorTests : IClassFixture<ApiFactory>
   [Theory]
   [InlineData(RequestStatus.AwaitingConfirmation)]
   [InlineData(RequestStatus.Succeeded)]
-  [InlineData(RequestStatus.Cancelled)]
+  [InlineData(RequestStatus.Failed)]
   public async Task RunAsync_DoesNothing_WhenNotQueued(RequestStatus status)
   {
     var request = await _factory.SeedRequestAsync(OwnerId, status);
@@ -239,16 +239,26 @@ public class TerraformJobProcessorTests : IClassFixture<ApiFactory>
   }
 
   [Fact]
-  public async Task RunAsync_DestroysAndClearsOutputs_WhenDestroying()
+  public async Task RunAsync_DestroysThenDeletesTheRequestAndEverythingStoredForIt_WhenDestroying()
   {
     var request = await SeedDestroying(withState: true);
+    var dependency = await _factory.SeedRequestAsync(OwnerId, RequestStatus.Succeeded);
+    await _factory.AddDependencyAsync(request.Id, dependency.Id);
 
     await Run(request.Id);
 
-    var stored = await Find(request.Id);
-    Assert.Equal(RequestStatus.Destroyed, stored.Status);
-    Assert.Null(stored.Outputs);
-    Assert.Null(stored.SensitiveOutputs);
+    Assert.Null(await _factory.FindRequestAsync(request.Id));
+    using (var scope = _factory.Services.CreateScope())
+    {
+      var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+      Assert.False(await db.RequestSensitiveOutputs.AnyAsync(x => x.RequestId == request.Id));
+      Assert.False(await db.JobLogLines.AnyAsync(x => x.RequestId == request.Id));
+      Assert.False(await db.RequestDependencies.AnyAsync(x => x.RequestId == request.Id));
+    }
+
+    Assert.Contains(request.Id, _factory.TerraformState.Deleted);
+    Assert.False(await _factory.TerraformState.HasStateAsync(request.Id, CancellationToken.None));
+    Assert.NotNull(await _factory.FindRequestAsync(dependency.Id));
     var workspace = Path.Combine(_factory.WorkspacesRoot, request.Id.ToString());
     Assert.Equal(
       [
@@ -262,23 +272,39 @@ public class TerraformJobProcessorTests : IClassFixture<ApiFactory>
       Assert.Equal(workspace, i.WorkingDirectory);
       Assert.Equal("test-do-token", i.Environment["DIGITALOCEAN_TOKEN"]);
     });
-    Assert.Equal("Destroyed.", (await Lines(request.Id))[^1].Text);
   }
 
   [Fact]
-  public async Task RunAsync_DestroysWithoutRunningTerraform_WhenThereIsNoState()
+  public async Task RunAsync_DeletesTheProjectAndUnlinksItsProposals_WhenDestroyingAProjectsRequest()
+  {
+    var project = await _factory.SeedProjectAsync(OwnerId, RequestStatus.Destroying);
+    var proposal = await _factory.SeedRequestAsync(OwnerId, RequestStatus.AwaitingConfirmation, projectId: project.Id);
+    await _factory.AddDependencyAsync(proposal.Id, project.ProjectRequestId);
+
+    await Run(project.ProjectRequestId);
+
+    Assert.Null(await _factory.FindRequestAsync(project.ProjectRequestId));
+    using var scope = _factory.Services.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    Assert.False(await db.Projects.AnyAsync(p => p.Id == project.Id));
+    Assert.False(await db.RequestDependencies.AnyAsync(d => d.DependsOnId == project.ProjectRequestId));
+    var kept = await db.ProvisioningRequests.SingleAsync(x => x.Id == proposal.Id);
+    Assert.Equal((RequestStatus.AwaitingConfirmation, (Guid?)null), (kept.Status, kept.ProjectId));
+  }
+
+  [Fact]
+  public async Task RunAsync_DeletesWithoutRunningTerraform_WhenThereIsNoState()
   {
     var request = await SeedDestroying(withState: false);
 
     await Run(request.Id);
 
-    Assert.Equal(RequestStatus.Destroyed, (await Find(request.Id)).Status);
+    Assert.Null(await _factory.FindRequestAsync(request.Id));
     Assert.Empty(_factory.Terraform.Invocations);
-    Assert.StartsWith("Nothing to destroy", (await Lines(request.Id))[^1].Text, StringComparison.Ordinal);
   }
 
   [Fact]
-  public async Task RunAsync_FailsAndKeepsOutputs_WhenDestroyFails()
+  public async Task RunAsync_FailsAndKeepsEverything_WhenDestroyFails()
   {
     var request = await SeedDestroying(withState: true);
     _factory.Terraform.Script("destroy", 1, (LogSource.Stderr, "Error: droplet is locked"));
@@ -289,9 +315,28 @@ public class TerraformJobProcessorTests : IClassFixture<ApiFactory>
     Assert.Equal(RequestStatus.Failed, stored.Status);
     Assert.NotNull(stored.Outputs);
     Assert.NotNull(stored.SensitiveOutputs);
+    Assert.DoesNotContain(request.Id, _factory.TerraformState.Deleted);
+    Assert.True(await _factory.TerraformState.HasStateAsync(request.Id, CancellationToken.None));
     var lines = await Lines(request.Id);
     Assert.Contains(lines, l => l.Text == "Error: droplet is locked");
     Assert.Equal("Failed: terraform destroy exited with code 1.", lines[^1].Text);
+  }
+
+  [Fact]
+  public async Task RunAsync_FailsAndKeepsEverything_WhenSomethingThatMayExistStillDependsOnIt()
+  {
+    // Destroy refuses this; the delete checks again rather than orphan a live dependent.
+    var request = await SeedDestroying(withState: true);
+    var dependent = await _factory.SeedRequestAsync(OwnerId, RequestStatus.Succeeded);
+    await _factory.AddDependencyAsync(dependent.Id, request.Id);
+
+    await Run(request.Id);
+
+    var stored = await Find(request.Id);
+    Assert.Equal(RequestStatus.Failed, stored.Status);
+    Assert.NotNull(stored.SensitiveOutputs);
+    Assert.DoesNotContain(request.Id, _factory.TerraformState.Deleted);
+    Assert.NotNull(await _factory.FindRequestAsync(dependent.Id));
   }
 
   [Fact]
@@ -334,7 +379,7 @@ public class TerraformJobProcessorTests : IClassFixture<ApiFactory>
 
     await Run(request.Id);
 
-    Assert.Equal(RequestStatus.Destroyed, (await Find(request.Id)).Status);
+    Assert.Null(await _factory.FindRequestAsync(request.Id));
     var workspace = Path.Combine(_factory.WorkspacesRoot, request.Id.ToString());
     Assert.Equal(saved, await File.ReadAllTextAsync(Path.Combine(workspace, TerraformWorkspace.VariablesFile)));
     Assert.True(File.Exists(Path.Combine(workspace, "main.tf")));
@@ -351,12 +396,12 @@ public class TerraformJobProcessorTests : IClassFixture<ApiFactory>
     _factory.TerraformState.Add(request.Id);
     Directory.Delete(_factory.WorkspacesRoot, recursive: true);
     await SetStatus(request.Id, RequestStatus.Destroying);
+    var applied = (await Find(request.Id)).TerraformVariables;
     await Run(request.Id);
 
-    Assert.Equal(RequestStatus.Destroyed, (await Find(request.Id)).Status);
+    Assert.Null(await _factory.FindRequestAsync(request.Id));
     Assert.Single(
       _factory.Terraform.Invocations.Select(i => i.WorkingDirectory).Distinct());
-    var applied = (await Find(request.Id)).TerraformVariables;
     Assert.Equal(
       applied,
       await File.ReadAllTextAsync(

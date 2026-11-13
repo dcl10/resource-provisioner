@@ -14,21 +14,25 @@ type LogState = "live" | "ended" | "error";
  * @param requestId - the request
  * @param follow - whether a job is queued or running; pass the request's in-progress state
  * @param onStatus - called when the stream reports a status, to refresh the request
+ * @param onDeleted - called when the request is destroyed, and so deleted, while the stream is open
  * @returns the lines so far and the stream's state
  */
 export function useRequestLog(
   requestId: string,
   follow: boolean,
   onStatus: (status: RequestStatus) => void,
+  onDeleted?: () => void,
 ) {
   const [lines, setLines] = useState<LogLine[]>([]);
   const [state, setState] = useState<LogState>("live");
   const lastId = useRef(0);
   const statusCallback = useRef(onStatus);
+  const deletedCallback = useRef(onDeleted);
 
   useEffect(() => {
     statusCallback.current = onStatus;
-  }, [onStatus]);
+    deletedCallback.current = onDeleted;
+  }, [onStatus, onDeleted]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -48,7 +52,10 @@ export function useRequestLog(
       },
       controller.signal,
     ).then(
-      () => setState("ended"),
+      (final) => {
+        setState("ended");
+        if (final === null) deletedCallback.current?.();
+      },
       () => {
         if (!controller.signal.aborted) setState("error");
       },
@@ -64,18 +71,26 @@ export function useRequestLog(
  * @param requestId - the request
  * @param follow - whether a job is queued or running
  * @param onStatus - called when the stream reports a status
+ * @param onDeleted - called when the request is destroyed, and so deleted, while the log is open
  * @returns the log panel
  */
 export function RequestLog({
   requestId,
   follow,
   onStatus,
+  onDeleted,
 }: {
   requestId: string;
   follow: boolean;
   onStatus: (status: RequestStatus) => void;
+  onDeleted?: () => void;
 }) {
-  const { lines, state } = useRequestLog(requestId, follow, onStatus);
+  const { lines, state } = useRequestLog(
+    requestId,
+    follow,
+    onStatus,
+    onDeleted,
+  );
   const panel = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

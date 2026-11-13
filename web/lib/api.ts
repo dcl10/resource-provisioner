@@ -52,7 +52,7 @@ export async function readApiError(response: Response): Promise<ApiError> {
  * Calls the API through the proxy and reads a JSON response.
  * @param path - the path after `/api/`, such as `/conversations`
  * @param init - fetch options
- * @returns the parsed body
+ * @returns the parsed body; undefined for a 204 No Content
  * @throws ApiError when the response isn't successful
  */
 export async function apiFetch<T>(
@@ -66,7 +66,18 @@ export async function apiFetch<T>(
   if (!response.ok) {
     throw await readApiError(response);
   }
+  if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
+}
+
+/**
+ * Whether an error is the API's 404: what was asked for doesn't exist (a cancelled or destroyed request is deleted),
+ * or isn't the user's.
+ * @param error - the error, if any
+ * @returns whether it's a 404
+ */
+export function isNotFound(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 404;
 }
 
 /**

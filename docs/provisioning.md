@@ -55,8 +55,12 @@ first reads what it depends on:
 - **Some still pending** (queued or applying): it's left `Queued`, and the API log notes it's waiting. After every job,
   the runner queues the requests waiting on that one again, so a sequence runs in order whatever order it was queued
   in, and still runs after a restart (startup recovery re-queues every `Queued` request).
-- **One failed, was cancelled, or is being or has been destroyed:** it moves `Queued → Failed` without running
-  Terraform, with the log line `Failed: didn't run, because <type> "<name>" (<id>), which it depends on, is <status>.`
+- **One failed or is being destroyed:** it moves `Queued → Failed` without running Terraform, with the log line
+  `Failed: didn't run, because <type> "<name>" (<id>), which it depends on, is <status>.`
+- **One no longer exists** (it was cancelled or destroyed, and so deleted): the same, with
+  `Failed: didn't run, because request <id>, which it depends on, no longer exists.` Deleting a request deletes the
+  dependencies on it, and neither can happen while a confirmed request depends on it, so this only catches a delete
+  that races the runner's read.
 
 ## Destroying
 
@@ -72,12 +76,20 @@ request to `Destroying` and queues it. The runner then:
    `-input=false -no-color`. Nothing an earlier job left on disk is needed. If the type is no longer in the catalog,
    or the request has no saved tfvars (it was applied before they were saved), the request moves to `Failed` without
    running Terraform, and the log says an admin can delete its resources by the `rp-<requestId>` tag.
-3. Clears the request's outputs and deletes its sensitive outputs (the credentials they held no longer work), then
-   moves it to `Destroyed`, logging `Destroyed.`.
+3. Deletes the request, through `IRequestDeleter`, in one transaction: the request, its sensitive outputs (the
+   credentials they held no longer work), its job log, its dependencies both ways, the project it backs (for a
+   `project` request) and its Terraform state (`ITerraformStateStore.DeleteStateAsync`, the request's row in
+   `terraform_state.states`). Nothing is kept; the API logs `Destroyed and deleted request <id>`. Proposals that
+   depended on it stay, unlinked, and can't be confirmed ([architecture.md](architecture.md#deleting-a-request)). If
+   the delete itself fails (something that may exist still depends on it), the transaction rolls back and the request
+   moves to `Failed`, keeping everything.
 
-If `destroy` exits non-zero the request moves to `Failed` with its outputs kept, since some resources may still exist,
-and it can be destroyed again. `Destroying` counts as active, so the active-request count drops only once the request is
-`Destroyed`.
+If `destroy` exits non-zero the request moves to `Failed` with everything kept, its outputs and its state above all,
+since some resources may still exist, and it can be destroyed again. State is only ever deleted after a successful
+destroy. `Destroying` counts as active, so the active-request count drops only once the request is deleted.
+
+An open request page or log stream sees the request go: the logs endpoint ends with a `deleted` event, and
+`GET /api/requests/{id}` answers 404.
 
 One gap: an apply killed (the API stopped) before Terraform first wrote its state can leave resources with no state to
 destroy them from. Everything the runner creates is tagged `rp-<requestId>`, so an admin can find such leftovers in the
@@ -109,10 +121,11 @@ Each job prepares `<Workspaces:Root>/<requestId>/` afresh, deleting whatever an 
 **State is in the app database**, not the folder. Terraform's [`pg`
 backend](https://developer.hashicorp.com/terraform/language/backend/pg) keeps it in the `terraform_state` schema of
 the app's Postgres, which Terraform creates on first use (table `states`: one row per Terraform workspace, `name` and
-`data`). EF Core migrations don't touch that schema. Each request has its own Terraform workspace, named by its
-request ID, so requests stay independent; the row appears when `workspace select -or-create=true` first runs, and
-`TerraformStateStore` checks for it before an apply (which must find none) and a destroy (which has nothing to do
-without one). The backend locks a workspace with a Postgres advisory lock while Terraform writes it. State is backed up
+`data`). EF Core migrations don't create or change that schema (`DeleteFinishedRequests` only deleted the rows of
+requests already destroyed). Each request has its own Terraform workspace, named by its request ID, so requests stay
+independent; the row appears when `workspace select -or-create=true` first runs, `TerraformStateStore` checks for it
+before an apply (which must find none) and a destroy (which has nothing to do without one), and deletes it, in the same
+transaction as the request, once a destroy has succeeded ([Destroying](#destroying)). The backend locks a workspace with a Postgres advisory lock while Terraform writes it. State is backed up
 with the app database, and is lost with it.
 
 `PG_CONN_STR` is the app's connection string in libpq form (`host='…' port='…' dbname='…' user='…' password='…'
@@ -135,7 +148,8 @@ without a default would stop older requests being destroyed, so give new variabl
 Every line Terraform writes to stdout or stderr is saved as a `JobLogLine` (`JobLogLines` table: request ID, time,
 `Stream` = `System` / `Stdout` / `Stderr`, text) as it arrives. `System` lines are the runner's own: the command it's
 starting (`$ terraform init -input=false -no-color`) and the outcome (`Provisioned.`, `Destroyed.`, `Nothing to
-destroy: ...` or `Failed: ...`). A request has one log: a destroy's lines follow its apply's.
+destroy: ...` or `Failed: ...`). A request has one log: a destroy's lines follow its apply's. The log is deleted with
+the request once a destroy succeeds.
 
 `terraform output -json`'s stdout is **never** logged, because it holds the sensitive values; the log shows
 `$ terraform output -json (values not logged)` instead. If its output can't be parsed, the error doesn't quote it.
@@ -149,6 +163,7 @@ Server-sent events. Visible to the owner and to admins; anyone else gets 404, as
 | `status` | `{"status":"Applying"}` | first, then whenever the status changes |
 | `log` | `{"id":42,"at":"...","stream":"Stdout","text":"..."}`, with SSE `id: 42` | each line, oldest first |
 | `end` | `{"status":"Succeeded"}` | once the request is not `Queued`, `Applying` or `Destroying`; the stream then closes |
+| `deleted` | `{}` | instead of `end`, once a destroy has finished and the request (log and all) has been deleted; the stream then closes |
 
 A finished request replays its whole log and ends at once. A reconnect sending `Last-Event-ID` resumes after that
 line. The endpoint polls the database every `Runner:LogPollInterval` (default 1 s) while a job runs, because the runner
@@ -169,5 +184,6 @@ each command and plays back scripted lines and exit codes, and the test host lea
 decide when jobs run. Tests run on Postgres, each test host on its own database built by the migrations
 ([architecture.md](architecture.md#api-layout)), so the runner, the logs endpoint and the test can all use it at once.
 `FakeTerraform` never writes state, so `ITerraformStateStore` is swapped for `FakeTerraformState`, where a test says
-which requests have state; `TerraformStateStoreTests` runs the real store against a test database (a `states` table
-like the `pg` backend's) and covers the connection-string conversion. `TerraformProcessRunnerTests` runs the real wrapper against `/bin/sh` instead of Terraform.
+which requests have state and sees which were deleted; `TerraformStateStoreTests` runs the real store against a test
+database (a `states` table like the `pg` backend's) and covers the connection-string conversion, and
+`RequestDeleterTests` deletes requests with the real store, to show the request and its state go in one transaction. `TerraformProcessRunnerTests` runs the real wrapper against `/bin/sh` instead of Terraform.

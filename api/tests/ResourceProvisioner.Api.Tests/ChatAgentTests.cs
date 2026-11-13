@@ -272,7 +272,6 @@ public class ChatAgentTests : IClassFixture<ApiFactory>
       RequestStatus.Succeeded,
       outputs: """{"ipv4_address":"192.0.2.1"}""",
       sensitiveOutputs: """{"root_password":"output-secret"}""");
-    var destroyed = await _factory.SeedRequestAsync(_userId, RequestStatus.Destroyed);
     var others = await _factory.SeedRequestAsync("someone-else", RequestStatus.Succeeded);
     _factory.ChatModel.ReplyToolUse(AgentTools.ListMyResources);
     _factory.ChatModel.ReplyText("ok");
@@ -283,7 +282,6 @@ public class ChatAgentTests : IClassFixture<ApiFactory>
     Assert.Contains(mine.Id.ToString(), json);
     Assert.Contains("192.0.2.1", json);
     Assert.DoesNotContain("output-secret", json);
-    Assert.DoesNotContain(destroyed.Id.ToString(), json);
     Assert.DoesNotContain(others.Id.ToString(), json);
   }
 
