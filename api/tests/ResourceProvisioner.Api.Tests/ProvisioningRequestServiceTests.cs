@@ -9,8 +9,11 @@ using Models;
 using Services.Requests;
 using Xunit;
 
-/// <summary><c>ProposeAsync</c>, which the agent's <c>propose_request</c> tool (#17) will call.</summary>
-public class ProvisioningRequestServiceTests(ApiFactory factory) : IClassFixture<ApiFactory>
+/// <summary>
+/// <c>ProposeAsync</c>, which the agent's <c>propose_request</c> tool and <c>POST /api/projects</c> call, and the
+/// project checks at confirm.
+/// </summary>
+public class ProvisioningRequestServiceTests(HighLimitApiFactory factory) : IClassFixture<HighLimitApiFactory>
 {
   private const string DatabaseType = "test-database";
 
@@ -114,14 +117,13 @@ public class ProvisioningRequestServiceTests(ApiFactory factory) : IClassFixture
     var result = await Propose(_owner, DatabaseType, DatabaseReferencing(server.Id));
 
     Assert.True(result.IsValid);
-    var link = Assert.Single(result.Request!.DependsOn);
+    var link = Assert.Single(References(result));
     Assert.Equal(
       (server.Id, "test-server", "Test server", "web-1", status),
       (link.Id, link.Type, link.DisplayName, link.Name, link.Status));
     using var scope = factory.Services.CreateScope();
-    var dependency = await scope.ServiceProvider.GetRequiredService<AppDbContext>().RequestDependencies
-      .SingleAsync(d => d.RequestId == result.Request.Id);
-    Assert.Equal(server.Id, dependency.DependsOnId);
+    Assert.True(await scope.ServiceProvider.GetRequiredService<AppDbContext>().RequestDependencies
+      .AnyAsync(d => d.RequestId == result.Request!.Id && d.DependsOnId == server.Id));
   }
 
   [Theory]
@@ -157,7 +159,7 @@ public class ProvisioningRequestServiceTests(ApiFactory factory) : IClassFixture
 
     var result = await Propose(_owner, DatabaseType, DatabaseReferencing(server.Id, server.Id));
 
-    Assert.Single(result.Request!.DependsOn);
+    Assert.Single(References(result));
   }
 
   [Fact]
@@ -180,6 +182,160 @@ public class ProvisioningRequestServiceTests(ApiFactory factory) : IClassFixture
     Assert.Matches("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", id);
   }
 
+  [Fact]
+  public async Task ProposeAsync_CreatesItsProject_ForAProjectRequest()
+  {
+    var result = await Propose(_owner, Project.RequestType, """{ "name": "shop", "purpose": "Service or API" }""");
+
+    Assert.True(result.IsValid);
+    var request = result.Request!;
+    Assert.Empty(request.DependsOn);
+    using var scope = factory.Services.CreateScope();
+    var project = await scope.ServiceProvider.GetRequiredService<AppDbContext>().Projects
+      .SingleAsync(p => p.ProjectRequestId == request.Id);
+    Assert.Equal(
+      (_owner.UserId, _owner.Email, "shop", null, "Service or API", "Development"),
+      (project.OwnerId, project.OwnerEmail, project.Name, project.Description, project.Purpose, project.Environment));
+    Assert.Equal(new ProjectLink(project.Id, "shop"), request.Project);
+    Assert.Null((await factory.FindRequestAsync(request.Id))!.ProjectId);
+  }
+
+  [Fact]
+  public async Task ProposeAsync_RejectsAProjectId_OnAProjectRequest()
+  {
+    var other = await factory.SeedProjectAsync(_owner.UserId);
+
+    var result = await ProposeIn(other.Id, Project.RequestType, """{ "name": "shop" }""");
+
+    Assert.Equal(["A project can't belong to another project; leave it out."],
+      result.Errors[ProvisioningRequestService.ProjectErrorKey]);
+  }
+
+  [Fact]
+  public async Task ProposeAsync_RequiresAProject_ForEveryOtherType()
+  {
+    var result = await ProposeIn(null, "test-server", """{ "name": "web-1" }""");
+
+    Assert.False(result.IsValid);
+    Assert.Equal(["Required: the ID of one of your projects to put this in."],
+      result.Errors[ProvisioningRequestService.ProjectErrorKey]);
+    Assert.Equal(0, await CountOwnedBy(_owner.UserId));
+  }
+
+  [Fact]
+  public async Task ProposeAsync_PutsTheRequestInTheProject_AndDependsOnItsRequest()
+  {
+    var project = await factory.SeedProjectAsync(_owner.UserId, name: "shop");
+
+    var result = await ProposeIn(project.Id, "test-server", """{ "name": "web-1" }""");
+
+    Assert.True(result.IsValid);
+    Assert.Equal(new ProjectLink(project.Id, "shop"), result.Request!.Project);
+    var link = Assert.Single(result.Request.DependsOn);
+    Assert.Equal((project.ProjectRequestId, Project.RequestType), (link.Id, link.Type));
+    Assert.Equal(project.Id, (await factory.FindRequestAsync(result.Request.Id))!.ProjectId);
+    using var scope = factory.Services.CreateScope();
+    Assert.True(await scope.ServiceProvider.GetRequiredService<AppDbContext>().RequestDependencies
+      .AnyAsync(d => d.RequestId == result.Request.Id && d.DependsOnId == project.ProjectRequestId));
+  }
+
+  [Theory]
+  [InlineData(RequestStatus.AwaitingConfirmation)]
+  [InlineData(RequestStatus.Queued)]
+  [InlineData(RequestStatus.Applying)]
+  [InlineData(RequestStatus.Succeeded)]
+  public async Task ProposeAsync_Accepts_WhenTheProjectIsPendingOrProvisioned(RequestStatus status)
+  {
+    var project = await factory.SeedProjectAsync(_owner.UserId, status);
+
+    var result = await ProposeIn(project.Id, "test-server", """{ "name": "web-1" }""");
+
+    Assert.True(result.IsValid);
+  }
+
+  [Theory]
+  [InlineData(RequestStatus.Failed)]
+  [InlineData(RequestStatus.Destroying)]
+  [InlineData(RequestStatus.Destroyed)]
+  [InlineData(RequestStatus.Cancelled)]
+  public async Task ProposeAsync_Rejects_WhenTheProjectCantBeBuiltOn(RequestStatus status)
+  {
+    var project = await factory.SeedProjectAsync(_owner.UserId, status, name: "shop");
+
+    var result = await ProposeIn(project.Id, "test-server", """{ "name": "web-1" }""");
+
+    Assert.Equal([$"Project \"shop\" is {status}; only pending or provisioned projects can be used."],
+      result.Errors[ProvisioningRequestService.ProjectErrorKey]);
+  }
+
+  [Fact]
+  public async Task ProposeAsync_RejectsAnotherUsersProject_AsIfItDidntExist()
+  {
+    var others = await factory.SeedProjectAsync("someone-else");
+    var admin = new RequestUser($"admin-{Guid.NewGuid():N}", "admin@example.com", IsAdmin: true);
+
+    var mine = await ProposeIn(others.Id, "test-server", """{ "name": "web-1" }""");
+    var asAdmin = await ProposeIn(others.Id, "test-server", """{ "name": "web-1" }""", admin);
+    var missing = await ProposeIn(Guid.NewGuid(), "test-server", """{ "name": "web-1" }""");
+
+    Assert.Equal([$"'{others.Id}' isn't the ID of one of your projects."],
+      mine.Errors[ProvisioningRequestService.ProjectErrorKey]);
+    Assert.Contains(ProvisioningRequestService.ProjectErrorKey, asAdmin.Errors.Keys);
+    Assert.Contains(ProvisioningRequestService.ProjectErrorKey, missing.Errors.Keys);
+  }
+
+  [Fact]
+  public async Task ConfirmManyAsync_QueuesAPendingProjectBeforeItsMember_AndRefusesTheMemberAlone()
+  {
+    var proposed = await Propose(_owner, Project.RequestType, """{ "name": "shop" }""");
+    var member = await ProposeIn(proposed.Request!.Project!.Id, "test-server", """{ "name": "web-1" }""");
+    using var scope = factory.Services.CreateScope();
+    var service = scope.ServiceProvider.GetRequiredService<IProvisioningRequestService>();
+
+    await Assert.ThrowsAsync<RequestConflictException>(() => service.ConfirmAsync(member.Request!.Id, _owner));
+    var confirmed = await service.ConfirmManyAsync([member.Request!.Id, proposed.Request.Id], _owner);
+
+    Assert.All(confirmed, r => Assert.Equal(RequestStatus.Queued, r.Status));
+    var project = await factory.FindRequestAsync(proposed.Request.Id);
+    var server = await factory.FindRequestAsync(member.Request.Id);
+    Assert.True(project!.ConfirmedAt <= server!.ConfirmedAt);
+  }
+
+  [Fact]
+  public async Task ConfirmAsync_Refuses_WhenTheProjectWentAwayMeanwhile()
+  {
+    var project = await factory.SeedProjectAsync(_owner.UserId, RequestStatus.Cancelled);
+    var server = await factory.SeedRequestAsync(_owner.UserId, RequestStatus.AwaitingConfirmation, projectId: project.Id);
+    using var scope = factory.Services.CreateScope();
+    var service = scope.ServiceProvider.GetRequiredService<IProvisioningRequestService>();
+
+    var ex = await Assert.ThrowsAsync<RequestValidationException>(() => service.ConfirmAsync(server.Id, _owner));
+
+    Assert.Contains(ProvisioningRequestService.ProjectErrorKey, ex.Errors.Keys);
+  }
+
+  [Fact]
+  public async Task ConfirmAsync_Refuses_ARequestInNoProject()
+  {
+    var server = await factory.SeedRequestAsync(
+      _owner.UserId,
+      RequestStatus.AwaitingConfirmation,
+      withoutProject: true);
+    using var scope = factory.Services.CreateScope();
+    var service = scope.ServiceProvider.GetRequiredService<IProvisioningRequestService>();
+
+    var ex = await Assert.ThrowsAsync<RequestValidationException>(() => service.ConfirmAsync(server.Id, _owner));
+
+    Assert.Contains(ProvisioningRequestService.ProjectErrorKey, ex.Errors.Keys);
+  }
+
+  private async Task<ProposeResult> ProposeIn(Guid? projectId, string type, string json, RequestUser? owner = null)
+  {
+    using var scope = factory.Services.CreateScope();
+    var service = scope.ServiceProvider.GetRequiredService<IProvisioningRequestService>();
+    return await service.ProposeAsync(owner ?? _owner, type, JsonNode.Parse(json)!.AsObject(), projectId, null);
+  }
+
   private static string DatabaseReferencing(params Guid[] ids) =>
     new JsonObject
     {
@@ -187,17 +343,22 @@ public class ProvisioningRequestServiceTests(ApiFactory factory) : IClassFixture
       ["allowed_droplet_request_ids"] = new JsonArray([.. ids.Select(id => JsonValue.Create(id.ToString()))]),
     }.ToJsonString();
 
+  /// <summary>Proposes a request in the owner's default project (a project request in none).</summary>
   private async Task<ProposeResult> Propose(RequestUser owner, string type, string json, Guid? conversationId = null)
   {
+    Guid? projectId = type == Project.RequestType ? null : (await factory.DefaultProjectAsync(owner.UserId)).Id;
     using var scope = factory.Services.CreateScope();
     var service = scope.ServiceProvider.GetRequiredService<IProvisioningRequestService>();
-    return await service.ProposeAsync(owner, type, JsonNode.Parse(json)!.AsObject(), conversationId);
+    return await service.ProposeAsync(owner, type, JsonNode.Parse(json)!.AsObject(), projectId, conversationId);
   }
+
+  private static IEnumerable<RequestLink> References(ProposeResult result) =>
+    result.Request!.DependsOn.Where(l => l.Type != Project.RequestType);
 
   private async Task<int> CountOwnedBy(string ownerId)
   {
     using var scope = factory.Services.CreateScope();
     return await scope.ServiceProvider.GetRequiredService<AppDbContext>()
-      .ProvisioningRequests.CountAsync(x => x.OwnerId == ownerId);
+      .ProvisioningRequests.CountAsync(x => x.OwnerId == ownerId && x.Type != Project.RequestType);
   }
 }
