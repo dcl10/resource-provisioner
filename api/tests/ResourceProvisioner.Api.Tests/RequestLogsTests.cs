@@ -7,6 +7,7 @@ using Data;
 using Fixtures;
 using Microsoft.Extensions.DependencyInjection;
 using Models;
+using Services.Provisioning;
 using Xunit;
 
 /// <summary><c>GET /api/requests/{id}/logs</c>, the server-sent event stream of a request's Terraform log.</summary>
@@ -112,6 +113,35 @@ public class RequestLogsTests(ApiFactory factory) : IClassFixture<ApiFactory>
     Assert.Contains(events, e => e.Type == "status" && e.Data["status"]!.GetValue<string>() == "Succeeded");
     Assert.Equal("late line", Assert.Single(events, e => e.Type == "log").Data["text"]!.GetValue<string>());
     Assert.Equal(("end", "Succeeded"), (events[^1].Type, events[^1].Data["status"]!.GetValue<string>()));
+  }
+
+  [Fact]
+  public async Task Logs_EndsWithDeleted_WhenTheRequestIsDestroyedWhileFollowing()
+  {
+    var request = await factory.SeedRequestAsync(_userId, RequestStatus.Destroying);
+
+    using var response = await User.GetAsync(
+      $"/api/requests/{request.Id}/logs", HttpCompletionOption.ResponseHeadersRead);
+    using var reader = new StreamReader(await response.Content.ReadAsStreamAsync());
+    var body = new StringBuilder();
+    while (await reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(10)) is { Length: > 0 } line)
+    {
+      body.Append(line).Append('\n');
+    }
+
+    body.Append('\n');
+    using (var scope = factory.Services.CreateScope())
+    {
+      await scope.ServiceProvider.GetRequiredService<ITerraformJobProcessor>()
+        .RunAsync(request.Id, CancellationToken.None);
+    }
+
+    body.Append(await reader.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(10)));
+
+    var events = Sse.Parse(body.ToString());
+    Assert.Equal(("status", "Destroying"), (events[0].Type, events[0].Data["status"]!.GetValue<string>()));
+    Assert.Equal("deleted", events[^1].Type);
+    Assert.DoesNotContain(events, e => e.Type == "end");
   }
 
   private async Task<List<long>> AddLines(Guid requestId, params (LogSource Source, string Text)[] lines)
