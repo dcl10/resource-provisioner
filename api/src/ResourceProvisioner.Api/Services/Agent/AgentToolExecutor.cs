@@ -20,8 +20,6 @@ public partial class AgentToolExecutor(
 {
   private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-  private static readonly RequestStatus[] Finished = [RequestStatus.Cancelled, RequestStatus.Destroyed];
-
   /// <summary>Runs one tool call.</summary>
   /// <param name="name">The tool.</param>
   /// <param name="input">Its input.</param>
@@ -69,15 +67,14 @@ public partial class AgentToolExecutor(
   }
 
   /// <summary>
-  /// The user's live requests grouped under their projects: each project with its own request's details and the
-  /// requests in it. Anything not in a listed project (a request from before projects) is listed apart.
+  /// The user's requests grouped under their projects: each project with its own request's details and the requests
+  /// in it. Anything not in a listed project (a request from before projects, or one whose project was cancelled) is
+  /// listed apart. Cancelled and destroyed requests are deleted, so they never appear.
   /// </summary>
   private async Task<ToolOutcome> ListMine(RequestUser user, CancellationToken cancellationToken)
   {
     // Only the user's own requests, even for an admin: the agent acts for the user, not as an admin.
-    var own = (await requests.ListAsync(user with { IsAdmin = false }, cancellationToken: cancellationToken))
-      .Where(r => !Finished.Contains(r.Status))
-      .ToList();
+    var own = await requests.ListAsync(user with { IsAdmin = false }, cancellationToken: cancellationToken);
     var projects = own.Where(r => r.Type == Project.RequestType && r.Project is not null).ToList();
     var projectIds = projects.Select(p => p.Project!.Id).ToHashSet();
 
