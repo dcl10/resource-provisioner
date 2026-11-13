@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { MessageSquarePlus } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import type { ComponentProps } from "react";
 import { toast } from "sonner";
 
 import {
@@ -19,9 +20,19 @@ import { cn } from "@/lib/utils";
 /**
  * A button that starts a conversation and opens it.
  * @param className - extra classes
+ * @param variant - the button's variant
+ * @param label - the button's text; "New conversation" by default
  * @returns the button
  */
-export function NewConversationButton({ className }: { className?: string }) {
+export function NewConversationButton({
+  className,
+  variant,
+  label = "New conversation",
+}: {
+  className?: string;
+  variant?: ComponentProps<typeof Button>["variant"];
+  label?: string;
+}) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const create = useMutation({
@@ -39,11 +50,12 @@ export function NewConversationButton({ className }: { className?: string }) {
   return (
     <Button
       className={className}
+      variant={variant}
       disabled={create.isPending}
       onClick={() => create.mutate()}
     >
       <MessageSquarePlus />
-      New conversation
+      {label}
     </Button>
   );
 }
