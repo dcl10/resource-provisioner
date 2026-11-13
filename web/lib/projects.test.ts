@@ -1,14 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   defaultVariableValues,
+  deleteProject,
   formVariables,
   resourceTree,
   toVariables,
   variablesSchema,
 } from "@/lib/projects";
 import type { RequestLink } from "@/lib/requests";
-import { projectVariables } from "@/lib/test-projects";
+import { projectVariables, testProject } from "@/lib/test-projects";
 import { testRequest } from "@/lib/test-requests";
 
 function link(id: string): RequestLink {
@@ -20,6 +21,45 @@ function link(id: string): RequestLink {
     status: "Succeeded",
   };
 }
+
+describe("deleteProject", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("sends DELETE and returns the project, now being destroyed", async () => {
+    const project = testProject("Destroying");
+    const fetchMock = vi.fn(async () =>
+      Response.json(project, { status: 202 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(deleteProject("prj-1")).resolves.toEqual(project);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/proxy/projects/prj-1",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
+  it("throws the API's message for a project still awaiting confirmation", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          {
+            detail:
+              "This request is AwaitingConfirmation, so it can't be destroyed.",
+          },
+          { status: 409 },
+        ),
+      ),
+    );
+
+    await expect(deleteProject("prj-1")).rejects.toThrow(
+      "This request is AwaitingConfirmation, so it can't be destroyed.",
+    );
+  });
+});
 
 describe("resourceTree", () => {
   it("nests each resource under the first resource in the project it depends on", () => {
