@@ -21,11 +21,17 @@ POST /api/requests/{id}/destroy ─▶ status Destroying ─┴─▶ IJobDispat
 - **The status decides the work.** A job is just a request ID; the processor looks at the request's status when it gets
   there. `Queued` is applied, `Destroying` is destroyed, and anything else is skipped, so a duplicate or stale entry is
   harmless.
+- **Jobs wait for each other.** A queued request waits until what it depends on has succeeded
+  ([Dependencies](#dependencies)), and a destroying one until what depends on it has gone ([Destroying](#destroying)):
+  its job does nothing yet. After every job the runner queues again the requests waiting for that one: the `Queued`
+  requests that depend on it, and the `Destroying` requests it depended on (read before the job, since a destroyed
+  request's dependencies go with it).
 - **Restarts.** The queue is in memory. When the runner starts it first moves any request left `Applying` to `Failed`,
   logging that the API stopped mid-apply and the request should be destroyed to clean up; a half-done apply isn't
   retried. Then it re-queues every `Queued` and `Destroying` request, oldest change first. A `Destroying` request may
   have been waiting its turn or half-done, and the runner can't tell which, but running `terraform destroy` again is
-  safe either way. Confirm and destroy save the status before queueing, so a crash in between loses nothing.
+  safe either way, and one still waiting for its dependents waits again, so a cascade carries on where it stopped.
+  Confirm and destroy save the statuses before queueing, so a crash in between loses nothing.
 
 ## Applying
 
@@ -64,29 +70,55 @@ first reads what it depends on:
 
 ## Destroying
 
-`POST /api/requests/{id}/destroy` is allowed from `Succeeded` or `Failed` (a failed apply or a failed destroy), by the
-owner or an admin (see [architecture.md](architecture.md#ownership)), and only once nothing that depends on it can
-still exist (see [Dependencies](architecture.md#dependencies)); otherwise it answers 409. It moves the
-request to `Destroying` and queues it. The runner then:
+`POST /api/requests/{id}/destroy` is allowed from `Succeeded`, `Failed` (a failed apply) or `DestroyFailed` (a failed
+destroy), by the owner or an admin (see [architecture.md](architecture.md#ownership)). It **cascades**: everything that
+depends on the request, directly or not, goes too. In one transaction the proposals among them are cancelled (deleted),
+and the request and every dependent that may exist (`Succeeded`, `Failed`, `DestroyFailed`) move to `Destroying`, each
+recording its `StatusBeforeDestroy`; then they're all queued. If a dependent is `Queued`, `Applying` or `Destroying`,
+it answers 409 and nothing changes ([architecture.md](architecture.md#dependencies)). `DELETE /api/projects/{id}` is
+the same for the project's request, which everything in the project depends on, and
+`GET /api/requests/{id}/destroy-plan` shows what either would do.
+
+When the runner takes a `Destroying` request, it first reads what depends on it (by reference or by being in the
+project it backs), leaving out proposals:
+
+- **Nothing:** it's destroyed, below.
+- **Something still in the runner's hands** (`Destroying`, `Queued`, `Applying`): it waits, and the API log notes it.
+  The runner queues it again after each job of something that depended on it, so a tree is torn down from the top
+  whatever order its jobs were queued in, and still is after a restart.
+- **Something settled** (`Succeeded`, `Failed`, `DestroyFailed`): it would never be destroyed, so its destroy stops
+  without running Terraform. It and everything `Destroying` that it depends on go back to their `StatusBeforeDestroy`,
+  with a log line naming the dependent (`Destroy stopped: <type> "<name>" (<id>) failed to destroy.` for a
+  `DestroyFailed` one). This only catches what the eager stop below didn't, such as a dependent that went back first.
+
+The destroy itself:
 
 1. Checks whether Terraform has state for the request. Without it, Terraform never ran (the apply failed before
    `workspace select`), so it logs `Nothing to destroy: ...` and skips to step 3.
 2. Prepares the workspace again, from the type's module in the catalog and the tfvars the apply saved, and runs
    `terraform init`, `terraform workspace select <requestId>` and `terraform destroy -auto-approve` in it, with
    `-input=false -no-color`. Nothing an earlier job left on disk is needed. If the type is no longer in the catalog,
-   or the request has no saved tfvars (it was applied before they were saved), the request moves to `Failed` without
-   running Terraform, and the log says an admin can delete its resources by the `rp-<requestId>` tag.
+   or the request has no saved tfvars (it was applied before they were saved), the destroy fails without running
+   Terraform, and the log says an admin can delete its resources by the `rp-<requestId>` tag.
 3. Deletes the request, through `IRequestDeleter`, in one transaction: the request, its sensitive outputs (the
    credentials they held no longer work), its job log, its dependencies both ways, the project it backs (for a
    `project` request) and its Terraform state (`ITerraformStateStore.DeleteStateAsync`, the request's row in
-   `terraform_state.states`). Nothing is kept; the API logs `Destroyed and deleted request <id>`. Proposals that
-   depended on it stay, unlinked, and can't be confirmed ([architecture.md](architecture.md#deleting-a-request)). If
-   the delete itself fails (something that may exist still depends on it), the transaction rolls back and the request
-   moves to `Failed`, keeping everything.
+   `terraform_state.states`). Nothing is kept; the API logs `Destroyed and deleted request <id>`. Proposals made since
+   the destroy began that depended on it stay, unlinked, and can't be confirmed
+   ([architecture.md](architecture.md#deleting-a-request)). If the delete itself fails (something that may exist still
+   depends on it), the transaction rolls back and the destroy fails, keeping everything.
 
-If `destroy` exits non-zero the request moves to `Failed` with everything kept, its outputs and its state above all,
-since some resources may still exist, and it can be destroyed again. State is only ever deleted after a successful
-destroy. `Destroying` counts as active, so the active-request count drops only once the request is deleted.
+**A failed destroy** (`destroy` exits non-zero, or a step above fails) moves the request to `DestroyFailed` with
+everything kept, its outputs and its state above all, since some resources may still exist; it can be destroyed again.
+In the same save, everything that was waiting for it, which is everything `Destroying` that it depends on, directly or
+not, goes back to its `StatusBeforeDestroy` with the log line `Destroy stopped: <type> "<name>" (<id>) failed to
+destroy.` and its `DestroyStoppedById` set. Nothing was done to them, so they really are still provisioned (or still
+failed). Destroying any of them again resumes the cascade: the `DestroyFailed` request is part of it again.
+
+**Safety.** A request's `terraform destroy` never starts while something that may exist depends on it, and a failed
+destroy stops everything below it, so a resource is never destroyed out from under one that uses it. State is only
+ever deleted after a successful destroy. `Destroying` counts as active, so the active-request count drops only once
+the request is deleted.
 
 An open request page or log stream sees the request go: the logs endpoint ends with a `deleted` event, and
 `GET /api/requests/{id}` answers 404.
@@ -148,7 +180,7 @@ without a default would stop older requests being destroyed, so give new variabl
 Every line Terraform writes to stdout or stderr is saved as a `JobLogLine` (`JobLogLines` table: request ID, time,
 `Stream` = `System` / `Stdout` / `Stderr`, text) as it arrives. `System` lines are the runner's own: the command it's
 starting (`$ terraform init -input=false -no-color`) and the outcome (`Provisioned.`, `Destroyed.`, `Nothing to
-destroy: ...` or `Failed: ...`). A request has one log: a destroy's lines follow its apply's. The log is deleted with
+destroy: ...`, `Failed: ...` or `Destroy stopped: ...`). A request has one log: a destroy's lines follow its apply's. The log is deleted with
 the request once a destroy succeeds.
 
 `terraform output -json`'s stdout is **never** logged, because it holds the sensitive values; the log shows
@@ -180,7 +212,7 @@ writes from its own scope. An `AwaitingConfirmation` request ends straight away;
 ## Testing
 
 `ITerraformProcessRunner` is the only thing that starts a process. Tests swap it for `FakeTerraform`, which records
-each command and plays back scripted lines and exit codes, and the test host leaves `TerraformRunner` out so tests
+each command and plays back scripted lines and exit codes (for every request, or for one), and the test host leaves `TerraformRunner` out so tests
 decide when jobs run. Tests run on Postgres, each test host on its own database built by the migrations
 ([architecture.md](architecture.md#api-layout)), so the runner, the logs endpoint and the test can all use it at once.
 `FakeTerraform` never writes state, so `ITerraformStateStore` is swapped for `FakeTerraformState`, where a test says
