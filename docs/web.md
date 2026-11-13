@@ -42,7 +42,7 @@ web/
 │   │   │   └── [id]/page.tsx   # one conversation
 │   │   ├── projects/
 │   │   │   ├── page.tsx        # projects list and New project
-│   │   │   └── [id]/page.tsx   # one project: status, settings, resources as a tree, Start a chat
+│   │   │   └── [id]/page.tsx   # one project: status, settings, resources as a tree, Start a chat, Delete project
 │   │   ├── requests/
 │   │   │   ├── page.tsx        # requests list, filtered by ?project=<id>
 │   │   │   └── [id]/page.tsx   # one request: project, settings, outputs, secrets, live log, Destroy
@@ -52,9 +52,9 @@ web/
 │       └── proxy/[...path]/    # forwards to the .NET API with the access token
 ├── components/
 │   ├── chat/                   # the chat: thread, composer, Markdown, proposal card, conversation list, query hooks
-│   ├── projects/               # projects table, New project dialog, project page, query hooks
-│   ├── requests/               # requests table and project filter, request page, status badge, destroy dialog, log,
-│   │                           # secrets, query hooks
+│   ├── projects/               # projects table, New project dialog, project page, Delete project, query hooks
+│   ├── requests/               # requests table and project filter, request page, status badge, Destroy and the
+│   │                           # destroy-plan dialog it shares with Delete project, log, secrets, query hooks
 │   ├── admin/                  # AdminOnly gate, the Users page (invite form, invitations table, query hooks)
 │   ├── providers.tsx           # next-themes, TanStack Query, tooltips, sonner Toaster
 │   ├── app-shell.tsx           # header and page container around every signed-in page
@@ -72,7 +72,8 @@ web/
     ├── catalog.ts              # resource types: variables (for forms), outputs (descriptions, which are secret)
     ├── chat.ts                 # conversation types and calls; sendMessage streams a reply
     ├── projects.ts             # project types and calls, resourceTree, the manifest-driven form schema
-    ├── requests.ts             # request types, status helpers, calls; followLogs streams a request's log
+    ├── requests.ts             # request types, status helpers, calls (destroy plan, destroy); followLogs streams a
+    │                           # request's log
     ├── sse.ts                  # SseParser: server-sent events from a fetch stream
     ├── test-projects.ts        # test helpers: a sample project, the project manifest's variables
     ├── test-requests.ts        # test helpers: a sample request, a JSON response
@@ -156,9 +157,16 @@ project.
   request page, with its status, and anything that depends on another resource in the project is indented under it
   (`resourceTree`; under the first one if it depends on several, with "also needs" naming the rest). The owner gets
   **Start a chat**, which starts a conversation to ask for more. The page re-reads itself while anything in it has a
-  job queued or running (`useProject`). The header's actions are where **Delete project** will go. A project that
-  was there and then answers 404 (its `project` request was destroyed or cancelled) toasts and goes to `/projects`;
-  one that never was says it doesn't exist.
+  job queued or running (`useProject`). A project that was there and then answers 404 (its `project` request was
+  destroyed or cancelled) toasts and goes to `/projects`; one that never was says it doesn't exist.
+- **Delete project** (`DeleteProjectButton`), beside the status for the owner or an admin once the project is
+  Provisioned, Failed or Destroy failed, opens the same destroy-plan dialog as a request's Destroy (below), showing the
+  plan of the project's `project` request (there's no project-level plan): everything in the project, in teardown
+  order, the project last, and the proposals in it that are cancelled. Confirming calls `DELETE /api/projects/<id>`
+  (202); the page then follows the destroy and, once the project is gone, goes to `/projects`. A project still
+  awaiting confirmation has no button (the API would answer 409). If a resource failed to destroy, the project goes
+  back to its status and the page says "Deleting stopped because <resource> failed to destroy" (its request's
+  `destroyStoppedBy`); after the project's own destroy failed, the button reads **Retry delete**.
 
 ## The requests pages
 
@@ -170,8 +178,7 @@ and filters the shared list query in the browser. `/requests/<id>` shows one req
 (or, for a `project` request, the one it backs), the settings it was created with, its outputs (described from the
 catalog), the Terraform log, and **Destroy**. A request
 that references others, or that others reference, shows them under **Related requests** (**Depends on**, **Needed
-by**), with their statuses. While queued, it says what it's **waiting for**. While something that depends on it may
-still exist, Destroy is replaced by the requests to destroy first.
+by**), with their statuses. While queued, it says what it's **waiting for**.
 
 - **Status** shows as a `StatusBadge`, with a spinner while a job is queued or running. The list and the request
   re-read themselves every 3 seconds while a job is in progress (`useRequests` / `useRequest`), and the chat's proposal
@@ -182,11 +189,23 @@ still exist, Destroy is replaced by the requests to destroy first.
 - **Secret outputs** (passwords, keys, connection URIs) are shown to the owner only, masked until they click **Reveal
   secrets**, which is the only time `GET /api/requests/<id>/sensitive-outputs` is called. **Hide secrets** drops them
   from the query cache, and the response is never cached by the browser.
-- **Destroy** is offered to the owner or an admin once the request is Provisioned or Failed. It asks for confirmation
-  in an alert dialog, then the badge and the log follow the destroy. Once it's destroyed, the API deletes the request:
-  the log stream ends with a `deleted` event, the page re-reads the request and gets 404, and since it had the request
-  before, it toasts "… was destroyed" and, with `router.replace`, goes to its project's page; to `/projects` for a
-  `project` request, whose project went with it; and to `/requests` for a request with no project.
+- **Destroy** is offered to the owner or an admin once the request is Provisioned, Failed or Destroy failed, even
+  while other requests depend on it: destroying it destroys them too. Its alert dialog (`DestroyPlanDialog`) reads
+  `GET /api/requests/<id>/destroy-plan` afresh each time it opens (`useDestroyPlan`) and lists what's **destroyed, in
+  this order** (each before what it depends on, the request itself last) and the **proposals cancelled**. When the
+  API would refuse the destroy now (something that depends on it is still queued, provisioning or being destroyed), it
+  shows the API's reason and what's **still running** instead, with the confirming button disabled, and re-reads the
+  plan every 3 seconds until it can go ahead. A refused destroy (the plan changed meanwhile) toasts the API's message
+  and re-reads the plan. Once confirmed, the dialog closes, and the badge and the log follow the destroy.
+- **A failed destroy** shows as **Destroy failed** (`DestroyFailed`): a destructive badge with a warning icon, unlike
+  Failed (a failed apply). What it created may still exist, so the button reads **Retry destroy**, and the page and
+  dialog say that a retry destroys only it and what depends on it. Whatever was waiting for it in the same cascade
+  (what it depends on) goes back to its status, and its page says "Destroy stopped because <x> failed to destroy",
+  linking to it, from the request's `destroyStoppedBy`; destroying that one again retries the whole cascade.
+- **Once it's destroyed**, the API deletes the request: the log stream ends with a `deleted` event, the page re-reads
+  the request and gets 404, and since it had the request before, it toasts "… was destroyed" and, with
+  `router.replace`, goes to its project's page; to `/projects` for a `project` request, whose project went with it;
+  and to `/requests` for a request with no project.
 - **Lists never show cancelled or destroyed requests**, which the API deletes, and `StatusBadge` has no state for them.
   A request the user opens that was already gone, or was never theirs, says it doesn't exist.
 - A request or conversation the user can't see (404) isn't retried: `retryUnlessClientError` retries only server and
