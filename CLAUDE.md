@@ -44,6 +44,7 @@ When implementing a feature or bug fix:
 
 ```bash
 cd web && npm ci && npm run lint && npm test && npm run build   # web
+docker compose up -d postgres-app                                # Postgres for the API tests
 cd api && dotnet build && dotnet test                            # API
 terraform fmt -recursive catalog infra                           # Terraform formatting
 ```
@@ -52,7 +53,7 @@ CI (`.github/workflows/ci.yml`) runs on PRs into, and pushes to, `main`, in thre
 
 - **web:** `npm ci`, `npm run lint -- --max-warnings=0` (Prettier and import-order warnings fail CI), `vitest run`,
   `npm run build`
-- **api:** `dotnet build`, `dotnet test`
+- **api:** `dotnet build`, `dotnet test` against a `postgres:16` service container
 - **terraform:** `terraform fmt -check -recursive` over `catalog/` and `infra/`, then `init -backend=false` and
   `validate` for each `catalog/*/` module and `infra/`; folders without `.tf` files are skipped
 
@@ -122,11 +123,13 @@ gets a new file and an index entry. Keep `AGENTS.md` identical to `CLAUDE.md`.
 
 ### Backend
 
-- **Framework:** xUnit, in `api/tests/ResourceProvisioner.Api.Tests/`; run `dotnet test` from `api/`
+- **Framework:** xUnit, in `api/tests/ResourceProvisioner.Api.Tests/`; run `docker compose up -d postgres-app`, then
+  `dotnet test` from `api/`
 - **Attributes:** `[Fact]` for single cases, `[Theory]` + `[InlineData]` for parameterised cases
 - **Naming:** `MethodName_ExpectedBehaviour_Condition`
-- **Pattern:** `WebApplicationFactory` integration tests on SQLite for endpoints and middleware, with a test auth
-  scheme instead of Keycloak; plain unit tests for pure logic. Fake Keycloak, Claude and the Terraform process
+- **Pattern:** `WebApplicationFactory` integration tests on Postgres (a migrated database per `ApiFactory`, server
+  from `RP_TEST_POSTGRES`) for endpoints and middleware, with a test auth scheme instead of Keycloak; plain unit tests
+  for pure logic. Fake Keycloak, Claude and the Terraform process
   runner. Tests never call real external services.
 
 ### Frontend
