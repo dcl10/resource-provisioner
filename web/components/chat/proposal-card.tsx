@@ -27,6 +27,7 @@ import {
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { ApiError, isNotFound } from "@/lib/api";
 import type { Proposal } from "@/lib/chat";
+import { PROJECT_TYPE, projectPath } from "@/lib/projects";
 import {
   cancelRequest,
   confirmRequest,
@@ -37,9 +38,6 @@ import {
 
 /** The problem title the API gives when confirming would exceed an active-request limit. */
 const LIMIT_TITLE = "Active request limit reached";
-
-/** The catalog type whose requests back projects. */
-const PROJECT_TYPE = "project";
 
 /** A problem shown on the card, with an optional heading. */
 interface CardProblem {
@@ -164,7 +162,12 @@ export function ProposalCard({ proposal }: { proposal: Proposal }) {
         {proposal.project && proposal.type !== PROJECT_TYPE ? (
           <p className="text-sm">
             <span className="font-medium">Project: </span>
-            {proposal.project.name}
+            <Link
+              href={projectPath(proposal.project.id)}
+              className="underline underline-offset-4"
+            >
+              {proposal.project.name}
+            </Link>
           </p>
         ) : null}
         {proposal.dependsOn?.length ? (
