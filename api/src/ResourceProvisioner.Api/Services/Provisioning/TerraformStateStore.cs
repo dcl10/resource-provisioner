@@ -19,11 +19,7 @@ public class TerraformStateStore(AppDbContext db) : ITerraformStateStore
   /// <inheritdoc />
   public async Task<bool> HasStateAsync(Guid requestId, CancellationToken cancellationToken)
   {
-    // The table only exists once Terraform has initialised the backend.
-    var tableExists = await db.Database
-      .SqlQuery<bool>($"SELECT to_regclass({Schema + ".states"}) IS NOT NULL AS \"Value\"")
-      .SingleAsync(cancellationToken);
-    if (!tableExists)
+    if (!await TableExists(cancellationToken))
     {
       return false;
     }
@@ -33,6 +29,25 @@ public class TerraformStateStore(AppDbContext db) : ITerraformStateStore
       .SqlQuery<int>($"SELECT 1 AS \"Value\" FROM terraform_state.states WHERE name = {name}")
       .AnyAsync(cancellationToken);
   }
+
+  /// <inheritdoc />
+  public async Task DeleteStateAsync(Guid requestId, CancellationToken cancellationToken)
+  {
+    if (!await TableExists(cancellationToken))
+    {
+      return;
+    }
+
+    // On the DbContext's connection, so it joins the transaction the request is deleted in.
+    var name = requestId.ToString();
+    await db.Database.ExecuteSqlAsync($"DELETE FROM terraform_state.states WHERE name = {name}", cancellationToken);
+  }
+
+  // The table only exists once Terraform has initialised the backend.
+  private async Task<bool> TableExists(CancellationToken cancellationToken) =>
+    await db.Database
+      .SqlQuery<bool>($"SELECT to_regclass({Schema + ".states"}) IS NOT NULL AS \"Value\"")
+      .SingleAsync(cancellationToken);
 
   /// <inheritdoc />
   public IReadOnlyDictionary<string, string> BackendEnvironment() =>
