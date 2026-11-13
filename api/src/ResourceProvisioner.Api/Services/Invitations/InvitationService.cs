@@ -31,10 +31,9 @@ public partial class InvitationService(
   /// <inheritdoc />
   public async Task<IReadOnlyList<InvitationResponse>> ListAsync(CancellationToken cancellationToken = default)
   {
-    // SQLite (tests) can't order by DateTimeOffset, so sort in memory; the table is small.
-    var invitations = (await db.Invitations.AsNoTracking().ToListAsync(cancellationToken))
+    var invitations = await db.Invitations.AsNoTracking()
       .OrderByDescending(x => x.SentAt)
-      .ToList();
+      .ToListAsync(cancellationToken);
 
     var now = time.GetUtcNow();
     var verified = await Task.WhenAll(invitations.Select(x => IsEmailVerified(x, cancellationToken)));
