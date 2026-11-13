@@ -4,7 +4,8 @@ using System.Text.Json.Serialization;
 
 /// <summary>
 /// Where a provisioning request has got to. The legal moves are in <c>RequestStateMachine</c>. Stored and serialized
-/// by name (<c>"Queued"</c>), not number.
+/// by name (<c>"Queued"</c>), not number. There is no final status: a cancelled proposal and a destroyed resource are
+/// deleted (<c>IRequestDeleter</c>), not kept.
 /// </summary>
 [JsonConverter(typeof(JsonStringEnumConverter<RequestStatus>))]
 public enum RequestStatus
@@ -24,12 +25,6 @@ public enum RequestStatus
   /// <summary>Applying or destroying failed. Resources may be left behind, so it can still be destroyed.</summary>
   Failed,
 
-  /// <summary>The runner is destroying the resource.</summary>
+  /// <summary>The runner is destroying the resource. Once it's destroyed, the request is deleted.</summary>
   Destroying,
-
-  /// <summary>Destroyed; nothing is left in DigitalOcean.</summary>
-  Destroyed,
-
-  /// <summary>The owner cancelled it before confirming; nothing was ever created.</summary>
-  Cancelled,
 }

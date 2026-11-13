@@ -4,14 +4,17 @@ using Models;
 
 /// <summary>
 /// The legal moves between <see cref="RequestStatus"/> values. Every status change goes through
-/// <see cref="Move"/>, so an illegal one (confirming twice, cancelling something already applying) can't happen.
+/// <see cref="Move"/>, so an illegal one (confirming twice, destroying something still applying) can't happen. A
+/// request leaves the machine by being deleted (<see cref="IRequestDeleter"/>): from
+/// <see cref="RequestStatus.AwaitingConfirmation"/> when the owner cancels it, and from
+/// <see cref="RequestStatus.Destroying"/> once the runner has destroyed it.
 /// </summary>
 public static class RequestStateMachine
 {
   /// <summary>
   /// Statuses that count towards <c>Limits:MaxActiveRequestsPerUser</c> and <c>Limits:MaxActiveRequestsTotal</c>:
-  /// confirmed and not yet finished with, i.e. a resource that exists or is about to. Awaiting confirmation,
-  /// cancelled and destroyed requests cost nothing; failed ones don't count either (see docs/architecture.md).
+  /// confirmed and not yet finished with, i.e. a resource that exists or is about to. Requests awaiting confirmation
+  /// cost nothing, and failed ones don't count either (see docs/architecture.md).
   /// </summary>
   public static readonly IReadOnlyList<RequestStatus> ActiveStatuses =
   [
@@ -23,7 +26,7 @@ public static class RequestStateMachine
 
   private static readonly Dictionary<RequestStatus, RequestStatus[]> Transitions = new()
   {
-    [RequestStatus.AwaitingConfirmation] = [RequestStatus.Queued, RequestStatus.Cancelled],
+    [RequestStatus.AwaitingConfirmation] = [RequestStatus.Queued],
     // Queued -> Failed is the runner's, when something the request depends on failed or went away before it ran.
     [RequestStatus.Queued] = [RequestStatus.Applying, RequestStatus.Failed],
     [RequestStatus.Applying] = [RequestStatus.Succeeded, RequestStatus.Failed],
@@ -32,9 +35,7 @@ public static class RequestStateMachine
     // A failed apply can leave resources behind (a droplet created before a later step failed), and a failed
     // destroy certainly can, so a failed request can always be destroyed (again).
     [RequestStatus.Failed] = [RequestStatus.Destroying],
-    [RequestStatus.Destroying] = [RequestStatus.Destroyed, RequestStatus.Failed],
-    [RequestStatus.Destroyed] = [],
-    [RequestStatus.Cancelled] = [],
+    [RequestStatus.Destroying] = [RequestStatus.Failed],
   };
 
   /// <summary>Whether a request can move from <paramref name="from"/> to <paramref name="to"/>.</summary>
@@ -46,7 +47,7 @@ public static class RequestStateMachine
 
   /// <summary>The statuses a request can move to from <paramref name="from"/>.</summary>
   /// <param name="from">The current status.</param>
-  /// <returns>The legal next statuses; empty for a final status.</returns>
+  /// <returns>The legal next statuses.</returns>
   public static IReadOnlyList<RequestStatus> NextStatuses(RequestStatus from) =>
     Transitions.TryGetValue(from, out var next) ? next : [];
 
