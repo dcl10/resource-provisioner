@@ -1,10 +1,57 @@
 namespace ResourceProvisioner.Api.Tests;
 
+using Data;
+using Fixtures;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Services.Provisioning;
 using Xunit;
 
-public class TerraformStateStoreTests
+public class TerraformStateStoreTests(ApiFactory factory) : IClassFixture<ApiFactory>
 {
+  [Fact]
+  public async Task HasStateAsync_ReturnsFalse_BeforeTerraformCreatesTheTable()
+  {
+    // Its own database, so the table the other tests create isn't there.
+    await using var fresh = new ApiFactory();
+    using var scope = fresh.Services.CreateScope();
+    var store = new TerraformStateStore(scope.ServiceProvider.GetRequiredService<AppDbContext>());
+
+    Assert.False(await store.HasStateAsync(Guid.NewGuid(), CancellationToken.None));
+  }
+
+  [Fact]
+  public async Task HasStateAsync_ReturnsTrue_OnlyForWorkspacesWithState()
+  {
+    var withState = Guid.NewGuid().ToString();
+    using var scope = factory.Services.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+    // The table Terraform's pg backend creates on first use, with one row per workspace.
+    await db.Database.ExecuteSqlRawAsync(
+      """
+      CREATE SCHEMA IF NOT EXISTS terraform_state;
+      CREATE TABLE IF NOT EXISTS terraform_state.states (id bigserial PRIMARY KEY, name text UNIQUE, data text);
+      """);
+    await db.Database.ExecuteSqlAsync($"INSERT INTO terraform_state.states (name, data) VALUES ({withState}, '')");
+    var store = new TerraformStateStore(db);
+
+    Assert.True(await store.HasStateAsync(Guid.Parse(withState), CancellationToken.None));
+    Assert.False(await store.HasStateAsync(Guid.NewGuid(), CancellationToken.None));
+  }
+
+  [Fact]
+  public void BackendEnvironment_PointsAtTheAppDatabase()
+  {
+    using var scope = factory.Services.CreateScope();
+    var store = new TerraformStateStore(scope.ServiceProvider.GetRequiredService<AppDbContext>());
+
+    var environment = store.BackendEnvironment();
+
+    Assert.Equal(TerraformStateStore.ToLibpq(factory.ConnectionString), environment["PG_CONN_STR"]);
+    Assert.Equal(TerraformStateStore.Schema, environment["PG_SCHEMA_NAME"]);
+  }
+
   [Theory]
   [InlineData("", "disable")]
   [InlineData("SslMode=Disable;", "disable")]
