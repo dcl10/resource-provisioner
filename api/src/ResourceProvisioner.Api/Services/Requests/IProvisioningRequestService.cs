@@ -127,9 +127,27 @@ public interface IProvisioningRequestService
     CancellationToken cancellationToken = default);
 
   /// <summary>
-  /// Tears down what a request created: moves it to <see cref="RequestStatus.Destroying"/> and onto the runner's
-  /// queue. Allowed from <see cref="RequestStatus.Succeeded"/> and <see cref="RequestStatus.Failed"/>. The owner or
-  /// an admin may destroy it, so an admin can clean up a resource someone left running.
+  /// What destroying a request would do, without doing it: what would be destroyed (it and everything that may exist
+  /// and depends on it, directly or not) in teardown order, what would be cancelled, and what's in the runner's hands,
+  /// or why it would be refused. Visible to whoever can see the request.
+  /// </summary>
+  /// <param name="id">Request ID.</param>
+  /// <param name="user">The signed-in user: the owner, or an admin.</param>
+  /// <param name="cancellationToken">Cancels the call.</param>
+  /// <returns>The plan.</returns>
+  /// <exception cref="KeyNotFoundException">No such request the user can see.</exception>
+  Task<DestroyPlanResponse> GetDestroyPlanAsync(
+    Guid id,
+    RequestUser user,
+    CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Tears down what a request created, and everything that depends on it: in one transaction, the proposals that
+  /// depend on it (directly or not) are cancelled, and so deleted, and it and every dependent that may exist
+  /// (Succeeded, Failed, DestroyFailed) move to <see cref="RequestStatus.Destroying"/>, each recording the status it
+  /// had, and onto the runner's queue. The runner destroys each only once everything that depends on it has gone.
+  /// Allowed from Succeeded, Failed and DestroyFailed (a retry, which resumes a cascade that stopped). The owner or an
+  /// admin may destroy it, so an admin can clean up resources someone left running.
   /// </summary>
   /// <param name="id">Request ID.</param>
   /// <param name="user">The signed-in user: the owner, or an admin.</param>
@@ -137,7 +155,8 @@ public interface IProvisioningRequestService
   /// <returns>The updated request.</returns>
   /// <exception cref="KeyNotFoundException">No such request the user can see.</exception>
   /// <exception cref="RequestConflictException">
-  /// It isn't Succeeded or Failed, changed meanwhile, or other requests that depend on it still exist (or may).
+  /// It can't be destroyed from its status, something that depends on it is queued, applying or being destroyed, or
+  /// something changed meanwhile.
   /// </exception>
   Task<ProvisioningRequestResponse> DestroyAsync(
     Guid id,
