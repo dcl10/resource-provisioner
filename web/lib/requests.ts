@@ -11,7 +11,8 @@ export type RequestStatus =
   | "Applying"
   | "Succeeded"
   | "Failed"
-  | "Destroying";
+  | "Destroying"
+  | "DestroyFailed";
 
 /** A short reference to another request: one a request depends on, or one that depends on it. */
 export interface RequestLink {
@@ -47,8 +48,30 @@ export interface ProvisioningRequest {
   confirmedAt: string | null;
   /** The requests it references, which are provisioned before it. */
   dependsOn: RequestLink[];
-  /** The requests that reference it, which must be destroyed before it. */
+  /** The requests that depend on it (reference it, or are in the project it backs): destroying it destroys them first. */
   dependents: RequestLink[];
+  /**
+   * When its destroy stopped because something that depends on it failed to destroy, and it went back to the status it
+   * had: that request, while it still exists. Null otherwise.
+   */
+  destroyStoppedBy: RequestLink | null;
+}
+
+/**
+ * What destroying a request would do, as `GET /api/requests/{id}/destroy-plan` returns it. The destroy itself works it
+ * out again, so it may differ if something changed in between.
+ */
+export interface DestroyPlan {
+  /** Whether a destroy would be accepted now. */
+  canDestroy: boolean;
+  /** Why not, in the API's words; null when it can. */
+  reason: string | null;
+  /** What would be destroyed, in teardown order: each before anything it depends on, so the request itself is last. */
+  destroy: RequestLink[];
+  /** The proposals that depend on it, which would be cancelled (deleted). */
+  cancel: RequestLink[];
+  /** What depends on it and is still queued, provisioning or being destroyed: a destroy waits for these to finish. */
+  waitFor: RequestLink[];
 }
 
 /** Statuses in which the runner has a job queued or running, so the request will change by itself. */
@@ -69,33 +92,14 @@ export function isInProgress(status: RequestStatus): boolean {
 
 /**
  * Whether a request in this status can be destroyed: once provisioned, or after a failed apply or destroy (which
- * may have left something behind).
+ * may have left something behind). Destroying it destroys what depends on it too; its destroy plan says what that is,
+ * and whether something still running makes it wait.
  * @param status - the status
  * @returns whether destroy is allowed
  */
 export function canDestroy(status: RequestStatus): boolean {
-  return status === "Succeeded" || status === "Failed";
-}
-
-/** Statuses of a dependent that stop what it depends on being destroyed: it exists, may exist, or is about to. */
-export const blockingDependentStatuses: readonly RequestStatus[] = [
-  "Queued",
-  "Applying",
-  "Succeeded",
-  "Failed",
-  "Destroying",
-];
-
-/**
- * The requests that must be destroyed before this one can be.
- * @param request - the request
- * @returns its dependents that exist, may exist, or are about to
- */
-export function blockingDependents(
-  request: ProvisioningRequest,
-): RequestLink[] {
-  return request.dependents.filter((d) =>
-    blockingDependentStatuses.includes(d.status),
+  return (
+    status === "Succeeded" || status === "Failed" || status === "DestroyFailed"
   );
 }
 
@@ -147,6 +151,7 @@ export const statusLabels: Record<RequestStatus, string> = {
   Succeeded: "Provisioned",
   Failed: "Failed",
   Destroying: "Destroying",
+  DestroyFailed: "Destroy failed",
 };
 
 /**
@@ -230,8 +235,20 @@ export function listRequests(): Promise<ProvisioningRequest[]> {
 }
 
 /**
- * Destroys what a request created: queues `terraform destroy`. Allowed from Succeeded or Failed, for the owner or an
- * admin.
+ * What destroying a request would do: what's destroyed, in order, what's cancelled, and whether it can go ahead now.
+ * @param id - the request ID
+ * @returns the plan
+ */
+export function getDestroyPlan(id: string): Promise<DestroyPlan> {
+  return apiFetch<DestroyPlan>(
+    `/requests/${encodeURIComponent(id)}/destroy-plan`,
+  );
+}
+
+/**
+ * Destroys what a request created, and everything that depends on it: cancels the proposals among them and queues
+ * `terraform destroy` for the rest, in teardown order. Allowed from Succeeded, Failed or DestroyFailed, for the owner
+ * or an admin; 409 while something that depends on it is still running.
  * @param id - the request ID
  * @returns the request, now Destroying
  */
