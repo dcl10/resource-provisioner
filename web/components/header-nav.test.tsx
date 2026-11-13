@@ -31,12 +31,16 @@ function renderNav(user?: SessionUser | null) {
 }
 
 describe("HeaderNav", () => {
-  it("renders the Chat and Requests links with the current one marked", () => {
+  it("renders the Chat, Projects and Requests links with the current one marked", () => {
     renderNav(ada);
 
     expect(screen.getByRole("link", { name: "Chat" })).toHaveAttribute(
       "href",
       "/chat",
+    );
+    expect(screen.getByRole("link", { name: "Projects" })).toHaveAttribute(
+      "href",
+      "/projects",
     );
     expect(screen.getByRole("link", { name: "Requests" })).toHaveAttribute(
       "aria-current",
