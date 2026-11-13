@@ -49,7 +49,8 @@ api/
 │   │                            # JobLogLine, Conversation and ConversationMessage entities
 │   ├── ResourceCatalog/         # manifest types, loader and checks, ICatalogService (see catalog.md)
 │   └── Services/                # Keycloak/ (IKeycloakUserAdmin over the admin API), Invitations/ (see auth-setup.md),
-│                                # Requests/ (IProvisioningRequestService, the state machine, RunnerVariables, logs),
+│                                # Requests/ (IProvisioningRequestService, the state machine, IRequestDeleter,
+│                                # RunnerVariables, logs),
 │                                # Projects/ (IProjectService),
 │                                # Provisioning/ (the Terraform runner, see provisioning.md),
 │                                # Terraform/ (ITerraformProcessRunner, the only thing that starts the CLI),
@@ -152,9 +153,14 @@ When deployed they come from environment variables (`Anthropic__ApiKey` and so o
 ```
 AwaitingConfirmation → Queued → Applying → Succeeded | Failed
 Queued               → Failed                (the runner: something it depends on won't succeed)
-Succeeded | Failed   → Destroying → Destroyed | Failed
-AwaitingConfirmation → Cancelled
+Succeeded | Failed   → Destroying → (deleted) | Failed
+AwaitingConfirmation → (deleted)             (the owner cancels)
 ```
+
+There is no final status. A request that's finished with, because the owner cancelled it before confirming or because
+the runner has destroyed what it created, is **deleted**, with everything stored for it (see
+[Deleting a request](#deleting-a-request)). From then on it answers 404 like any request that never existed, and it's
+left out of every list.
 
 A provisioning request (`ProvisioningRequest`, table `ProvisioningRequests`) holds the owner's `sub` (and their email
 at the time, so admins can tell whose it is), the type, the validated variables with defaults applied (JSON), the
@@ -170,15 +176,37 @@ tag and the manifests' droplet-reference patterns use.
 | `Applying` | `terraform apply` is running | the runner ([provisioning.md](provisioning.md)) |
 | `Succeeded` | The resource exists; outputs are stored | the runner |
 | `Failed` | Apply or destroy failed, so resources may be left behind; or a request it depended on failed or went away, so it never ran | the runner |
-| `Destroying` | Waiting for, or running, `terraform destroy` | the owner's or an admin's destroy (`POST /api/requests/{id}/destroy`) |
-| `Destroyed` | Nothing is left | the runner |
-| `Cancelled` | The owner cancelled before confirming; nothing was created | the owner (`POST /api/requests/{id}/cancel`) |
+| `Destroying` | Waiting for, or running, `terraform destroy`; once that succeeds, the runner deletes the request | the owner's or an admin's destroy (`POST /api/requests/{id}/destroy`) |
 
 Every status change goes through `RequestStateMachine.Move`, which refuses any move not drawn above (the API answers
 409). `Failed → Destroying` is allowed because a failed apply can leave part of a module created, and a failed destroy
 certainly does, so a failed request can always be destroyed (again). `Queued` can't be cancelled: the runner may
 already have picked it up. `Status` is also an EF Core concurrency token, so if two changes race (a confirm and a
-cancel, or the runner), the second fails with 409 instead of overwriting the first.
+cancel, or the runner), the second fails with 409 instead of overwriting the first; a delete only goes ahead while the
+request is still in the status it expects.
+
+### Deleting a request
+
+`IRequestDeleter` deletes a request in two cases, each in one database transaction:
+
+- **Cancel** (`POST /api/requests/{id}/cancel`, owner only, from `AwaitingConfirmation`): nothing was created, so the
+  request is deleted and the API answers **204**.
+- **Destroy finished**: once `terraform destroy` succeeds, or there was no Terraform state to destroy, the runner
+  deletes the request ([provisioning.md](provisioning.md#destroying)). A destroy that fails deletes nothing: the
+  request moves to `Failed` and keeps its outputs, log and, above all, its Terraform state, so it can be destroyed
+  again.
+
+The transaction covers the request and its sensitive outputs, its job log, its dependencies in both directions, the
+[project](#projects) it backs (if it's a `project` request) and, after a destroy, its Terraform state (a row in the
+same database's `terraform_state` schema, deleted through `ITerraformStateStore`). State is deleted only after a
+successful destroy, never for a request whose resources may still exist. Requests still awaiting confirmation that
+depended on it are kept, but lose the link: confirming one then fails its reference or project check (422), and a
+member of a deleted project is left in no project. Anything else that depends on it (which destroy refuses) stops the
+delete.
+
+Nothing else is kept: the only trace is a line in the API's own log, `Destroyed and deleted request <id>` (or
+`Cancelled and deleted request <id>`). Spend caps are unaffected, since they only count active requests. The
+`DeleteFinishedRequests` migration deleted the requests left `Cancelled` or `Destroyed` from before, the same way.
 
 **Proposing.** `IProvisioningRequestService.ProposeAsync(owner, type, variables, projectId, conversationId)` is what
 `propose_request` and `POST /api/projects` call. It validates the variables with `ICatalogService.ValidateVariables`
@@ -188,8 +216,8 @@ checks the [project](#projects) and every reference (see [below](#dependencies))
 field path for the agent to fix. There is no HTTP endpoint for proposing other types: only the agent creates them.
 
 **Confirming** checks again, because time passes between propose and confirm: the variables, project and references
-are re-validated (a project or referenced request may have been cancelled or destroyed meanwhile; the API answers 422
-with the errors), then the [spend caps](#spend-caps), then the request moves to `Queued` and onto the runner's queue. A request
+are re-validated (a project or referenced request may have been cancelled or destroyed, and so deleted, meanwhile; the
+API answers 422 with the errors), then the [spend caps](#spend-caps), then the request moves to `Queued` and onto the runner's queue. A request
 that depends on one still awaiting confirmation can't be confirmed on its own (409 naming it). **Confirm all**
 (`POST /api/requests/confirm`, `{"requestIds": [...]}`, up to 20) confirms a set together: every one is checked, the
 spend caps are checked for the whole set, and they're queued in dependency order, all or none; with several, each
@@ -231,20 +259,22 @@ someone can't see answers 404, so its existence isn't revealed.
 A variable marked `"references": "<type>"` in its manifest (see [catalog.md](catalog.md#variables)) holds request IDs
 of that type, such as a firewall's `droplet_request_ids`. At propose and again at confirm, every ID must be a request
 of that type **owned by the requesting user**, admins included, that is pending (`AwaitingConfirmation`, `Queued`,
-`Applying`) or `Succeeded`. A missing ID and another user's ID get the same error, so the check doesn't reveal other
-users' request IDs; the user's own request that's failed, cancelled, being destroyed or destroyed gets an error naming
-its status.
+`Applying`) or `Succeeded`. A missing ID (including one that was cancelled or destroyed, and so deleted) and another
+user's ID get the same error, so the check doesn't reveal other users' request IDs; the user's own request that's
+failed or being destroyed gets an error naming its status.
 
 Each referenced request becomes a **dependency** (`RequestDependencies`: request → the request it depends on), and so
 does the `project` request backing the request's [project](#projects), recorded automatically at propose. A request
 only references earlier ones, so there are no cycles. Dependencies mean:
 
 - **Provisioned in order.** A queued request waits until everything it depends on has `Succeeded`; the runner queues
-  it again whenever one of them finishes. If one fails, is cancelled, or is being or has been destroyed, it moves
+  it again whenever one of them finishes. If one fails, is being destroyed, or no longer exists, it moves
   `Queued → Failed` without running ([provisioning.md](provisioning.md#dependencies)).
 - **Confirmed in order.** See **Confirming** above.
 - **Destroyed in reverse.** A request can't be destroyed (409, naming them) while something that depends on it is
-  `Queued`, `Applying`, `Succeeded`, `Failed` (it may have created something) or `Destroying`.
+  `Queued`, `Applying`, `Succeeded`, `Failed` (it may have created something) or `Destroying`. Only a dependent
+  awaiting confirmation doesn't stop it; once it's destroyed, that dependent loses the link (see
+  [Deleting a request](#deleting-a-request)).
 - **Shown both ways.** Every request response has `dependsOn` and `dependents`: `{id, type, displayName, name,
   status}` for each.
 
@@ -279,15 +309,16 @@ project's request is recorded automatically, so the project is provisioned first
 own while its project still awaits confirmation. A `project` request takes no project.
 
 **Status.** A project's status is its request's (`AwaitingConfirmation` through `Succeeded`, `Failed`,
-`Destroying`). When the request is cancelled or destroyed, the project is gone: it's left out of `GET /api/projects`,
-`GET /api/projects/{id}` answers 404, and nothing more can be put in it. Destroying the project's request is refused
-while anything in it may still exist, as for any dependency.
+`Destroying`). When the request is cancelled or destroyed, the project is deleted with it: it's no longer in
+`GET /api/projects`, `GET /api/projects/{id}` answers 404, and nothing more can be put in it. Proposals that were in
+it are left in no project, so they can't be confirmed. Destroying the project's request is refused while anything in
+it may still exist, as for any dependency.
 
 **Endpoints** (ownership as in [the table above](#ownership)):
 
 | Endpoint | What it does |
 | --- | --- |
-| `GET /api/projects` | The user's projects (every user's for an admin), newest first: `{id, ownerId, ownerEmail, name, description, purpose, environment, status, projectRequestId, resourceCount, createdAt}`. `resourceCount` leaves out cancelled and destroyed requests. |
+| `GET /api/projects` | The user's projects (every user's for an admin), newest first: `{id, ownerId, ownerEmail, name, description, purpose, environment, status, projectRequestId, resourceCount, createdAt}`. |
 | `GET /api/projects/{id}` | The same, plus `request` (the `project` request) and `resources` (every request in it, newest first, each with `dependsOn` and `dependents`). |
 | `POST /api/projects` | Creates a project from the form, as above. |
 | `GET /api/requests?projectId=<id>` | The requests in a project and the one that backs it, within what the user can see. |
@@ -313,9 +344,9 @@ instance; several would need a database lock instead).
 
 **Active** means `Queued`, `Applying`, `Succeeded` or `Destroying`: confirmed, and the resource exists or is about to.
 Free types (`"free": true` in the manifest: projects, firewalls) never count, whether active or being confirmed.
-`AwaitingConfirmation` costs nothing, and `Cancelled` and `Destroyed` are finished. `Failed` doesn't count either, so a
-failure can't lock a user out; a failed apply may still have left something behind, which the user destroys from the
-request. Over a limit, confirm answers **409** with the title `Active request limit reached` and a `detail`
+`AwaitingConfirmation` costs nothing, and cancelled and destroyed requests are deleted. `Failed` doesn't count
+either, so a failure can't lock a user out; a failed apply may still have left something behind, which the user
+destroys from the request. Over a limit, confirm answers **409** with the title `Active request limit reached` and a `detail`
 saying which limit and what to do; the request stays `AwaitingConfirmation`, so it can be confirmed once something is
 destroyed.
 
