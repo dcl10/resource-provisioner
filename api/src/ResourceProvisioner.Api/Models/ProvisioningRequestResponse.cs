@@ -14,6 +14,10 @@ using System.Text.Json.Nodes;
 /// <param name="Status">Where it has got to.</param>
 /// <param name="Variables">The variables, with defaults applied and sensitive ones left out.</param>
 /// <param name="Outputs">The non-sensitive outputs, once provisioned.</param>
+/// <param name="Project">
+/// The project it belongs to; for a <c>project</c> request, the project it backs. Null only for a request from before
+/// projects, or one whose project is missing.
+/// </param>
 /// <param name="ConversationId">The conversation it was proposed in, if any.</param>
 /// <param name="CreatedAt">When it was proposed.</param>
 /// <param name="UpdatedAt">When its status last changed.</param>
@@ -29,6 +33,7 @@ public record ProvisioningRequestResponse(
   RequestStatus Status,
   JsonObject Variables,
   JsonObject? Outputs,
+  ProjectLink? Project,
   Guid? ConversationId,
   DateTimeOffset CreatedAt,
   DateTimeOffset UpdatedAt,
