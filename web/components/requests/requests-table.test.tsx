@@ -18,7 +18,7 @@ describe("RequestsTable", () => {
     vi.stubGlobal("fetch", async () =>
       jsonResponse([
         testRequest("Applying"),
-        testRequest("Destroyed", {
+        testRequest("Failed", {
           id: "req-2",
           ownerId: "user-2",
           ownerEmail: "other@example.com",
@@ -42,7 +42,7 @@ describe("RequestsTable", () => {
     );
     expect(within(row).getByText("Provisioning")).toBeInTheDocument();
     const other = screen.getByText("db-1").closest("tr")!;
-    expect(within(other).getByText("Destroyed")).toBeInTheDocument();
+    expect(within(other).getByText("Failed")).toBeInTheDocument();
   });
 
   it("shows the owner column only to admins", async () => {
