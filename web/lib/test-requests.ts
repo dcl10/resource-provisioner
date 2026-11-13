@@ -30,6 +30,7 @@ export function testRequest(
     confirmedAt: "2026-11-07T10:01:00Z",
     dependsOn: [],
     dependents: [],
+    destroyStoppedBy: null,
     ...overrides,
   };
 }
