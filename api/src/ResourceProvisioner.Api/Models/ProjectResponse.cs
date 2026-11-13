@@ -10,7 +10,7 @@ namespace ResourceProvisioner.Api.Models;
 /// <param name="Environment">Its environment, if set.</param>
 /// <param name="Status">Its status: the status of the <c>project</c> request that backs it.</param>
 /// <param name="ProjectRequestId">The <c>project</c> request that backs it.</param>
-/// <param name="ResourceCount">How many requests belong to it, leaving out cancelled and destroyed ones.</param>
+/// <param name="ResourceCount">How many requests belong to it.</param>
 /// <param name="CreatedAt">When it was proposed.</param>
 public record ProjectResponse(
   Guid Id,

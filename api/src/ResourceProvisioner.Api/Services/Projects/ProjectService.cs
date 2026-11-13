@@ -14,12 +14,6 @@ using Requests;
 /// <param name="requests">The request service.</param>
 public class ProjectService(AppDbContext db, IProvisioningRequestService requests) : IProjectService
 {
-  /// <summary>
-  /// Statuses of a <c>project</c> request whose project is gone; also the statuses of requests a project's
-  /// <see cref="ProjectResponse.ResourceCount"/> leaves out.
-  /// </summary>
-  public static readonly IReadOnlyList<RequestStatus> GoneStatuses = [RequestStatus.Cancelled, RequestStatus.Destroyed];
-
   /// <inheritdoc />
   public async Task<IReadOnlyList<ProjectResponse>> ListAsync(
     RequestUser user,
@@ -57,7 +51,7 @@ public class ProjectService(AppDbContext db, IProvisioningRequestService request
       project.Environment,
       request.Status,
       project.ProjectRequestId,
-      resources.Count(r => !GoneStatuses.Contains(r.Status)),
+      resources.Count,
       project.CreatedAt,
       request,
       resources);
@@ -98,17 +92,18 @@ public class ProjectService(AppDbContext db, IProvisioningRequestService request
   }
 
   /// <summary>
-  /// The projects the user may see that aren't gone, with their request's status and how many requests are in them.
+  /// The projects the user may see, with their request's status and how many requests are in them. A project whose
+  /// request was cancelled or destroyed was deleted with it.
   /// </summary>
   private IQueryable<ProjectRow> Visible(RequestUser user) =>
     from project in db.Projects.AsNoTracking()
     join request in db.ProvisioningRequests on project.ProjectRequestId equals request.Id
-    where (user.IsAdmin || project.OwnerId == user.UserId) && !GoneStatuses.Contains(request.Status)
+    where user.IsAdmin || project.OwnerId == user.UserId
     select new ProjectRow
     {
       Project = project,
       Status = request.Status,
-      ResourceCount = db.ProvisioningRequests.Count(m => m.ProjectId == project.Id && !GoneStatuses.Contains(m.Status)),
+      ResourceCount = db.ProvisioningRequests.Count(m => m.ProjectId == project.Id),
     };
 
   private static ProjectResponse ToResponse(Project project, RequestStatus status, int resourceCount) =>

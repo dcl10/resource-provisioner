@@ -4,8 +4,7 @@ namespace ResourceProvisioner.Api.Models;
 /// A user's project: the top level that holds their resources together. Every request belongs to exactly one
 /// project (<see cref="ProvisioningRequest.ProjectId"/>), except the <c>project</c> request that backs it
 /// (<see cref="ProjectRequestId"/>), which creates the DigitalOcean project and gives it its status, logs, state and
-/// outputs. Created with that request, when it's proposed. Once that request is cancelled or destroyed, the project
-/// is gone.
+/// outputs. Created with that request, when it's proposed, and deleted with it, when it's cancelled or destroyed.
 /// </summary>
 public class Project
 {
