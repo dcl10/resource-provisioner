@@ -46,19 +46,6 @@ public class ProvisioningRequestService(
     RequestStatus.Succeeded,
   ];
 
-  /// <summary>
-  /// Statuses of a dependent that stop its dependency being destroyed: it exists, may exist (a failed apply), or is
-  /// about to.
-  /// </summary>
-  public static readonly IReadOnlyList<RequestStatus> BlockingDependentStatuses =
-  [
-    RequestStatus.Queued,
-    RequestStatus.Applying,
-    RequestStatus.Succeeded,
-    RequestStatus.Failed,
-    RequestStatus.Destroying,
-  ];
-
   // Counting active requests and queueing must not interleave, or two confirms could both pass the limit. The POC
   // runs one API instance, so a process-wide lock is enough.
   private static readonly SemaphoreSlim ConfirmLock = new(1, 1);
@@ -263,35 +250,94 @@ public class ProvisioningRequestService(
   }
 
   /// <inheritdoc />
+  public async Task<DestroyPlanResponse> GetDestroyPlanAsync(
+    Guid id,
+    RequestUser user,
+    CancellationToken cancellationToken = default)
+  {
+    var request = await FindVisible(id, user, cancellationToken);
+    var plan = await PlanDestroy(request, cancellationToken);
+    return new DestroyPlanResponse(
+      plan.Reason is null,
+      plan.Reason,
+      [.. plan.Destroy.Select(Link)],
+      [.. plan.Cancel.Select(Link)],
+      [.. plan.WaitFor.Select(Link)]);
+  }
+
+  /// <inheritdoc />
   public async Task<ProvisioningRequestResponse> DestroyAsync(
     Guid id,
     RequestUser user,
     CancellationToken cancellationToken = default)
   {
     var request = await FindVisible(id, user, cancellationToken);
-    EnsureCanMove(request, RequestStatus.Destroying, "destroyed");
-
-    var dependentIds = await db.RequestDependencies.AsNoTracking()
-      .Where(d => d.DependsOnId == request.Id)
-      .Select(d => d.RequestId)
-      .ToListAsync(cancellationToken);
-    var blocking = await db.ProvisioningRequests.AsNoTracking()
-      .Where(x => dependentIds.Contains(x.Id) && BlockingDependentStatuses.Contains(x.Status))
-      .ToListAsync(cancellationToken);
-    if (blocking.Count > 0)
+    var plan = await PlanDestroy(request, cancellationToken);
+    if (plan.Reason is not null)
     {
-      throw new RequestConflictException(
-        "Destroy what depends on it first: " +
-        $"{string.Join(", ", blocking.Select(b => RequestLinks.Describe(RequestLinks.For(b, catalog))))}.");
+      throw new RequestConflictException(plan.Reason);
     }
 
-    RequestStateMachine.Move(request, RequestStatus.Destroying, time.GetUtcNow());
-    await Save(cancellationToken);
+    // All in one transaction: the proposals go, and the request and everything that may exist above it move to
+    // Destroying, or nothing changes. Every move and delete checks the status it read, so a confirm or a runner job
+    // that got in between makes the whole destroy fail with 409.
+    await using (var transaction = await db.Database.BeginTransactionAsync(cancellationToken))
+    {
+      foreach (var proposal in plan.Cancel)
+      {
+        await deleter.DeleteCancelledAsync(proposal.Id, cancellationToken);
+        db.Entry(proposal).State = EntityState.Detached;
+      }
 
-    // Saved first: if the API stops before the runner gets to it, the runner re-queues it at startup.
-    await jobs.EnqueueAsync(request.Id, cancellationToken);
+      var now = time.GetUtcNow();
+      foreach (var target in plan.Destroy)
+      {
+        RequestStateMachine.Move(target, RequestStatus.Destroying, now);
+      }
+
+      await Save(cancellationToken);
+      await transaction.CommitAsync(cancellationToken);
+    }
+
+    // Saved first: if the API stops before the runner gets to them, the runner re-queues them at startup. Each waits
+    // for what depends on it to go, so the order is only a head start.
+    foreach (var target in plan.Destroy)
+    {
+      await jobs.EnqueueAsync(target.Id, cancellationToken);
+    }
+
     return (await ToResponses([request], cancellationToken))[0];
   }
+
+  /// <summary>
+  /// Works out a cascading destroy of <paramref name="request"/>: everything that depends on it, directly or not, in
+  /// teardown order, split into what's destroyed (it and anything that may exist: Succeeded, Failed, DestroyFailed),
+  /// what's cancelled (proposals) and what's still in the runner's hands (Queued, Applying, Destroying), which refuses
+  /// the destroy until it's finished. The requests are tracked, so <see cref="DestroyAsync"/> can move them.
+  /// </summary>
+  private async Task<DestroyPlan> PlanDestroy(ProvisioningRequest request, CancellationToken cancellationToken)
+  {
+    var dependents = await RequestGraph.DependentsInTeardownOrderAsync(db, request, cancellationToken);
+    var cancel = dependents.Where(d => d.Status == RequestStatus.AwaitingConfirmation).ToList();
+    var waitFor = dependents
+      .Where(d => d.Status is RequestStatus.Queued or RequestStatus.Applying or RequestStatus.Destroying)
+      .ToList();
+    List<ProvisioningRequest> destroy =
+    [
+      .. dependents.Where(d => RequestStateMachine.DestroyableStatuses.Contains(d.Status)),
+      request,
+    ];
+
+    var reason = !RequestStateMachine.CanMove(request.Status, RequestStatus.Destroying)
+      ? $"This request is {request.Status}, so it can't be destroyed."
+      : waitFor.Count > 0
+        ? $"Wait for {string.Join(", ", waitFor.Select(w => RequestLinks.Describe(Link(w))))} to finish, then try " +
+          "again: it depends on this request."
+        : null;
+    return new DestroyPlan(destroy, cancel, waitFor, reason);
+  }
+
+  private RequestLink Link(ProvisioningRequest request) => RequestLinks.For(request, catalog);
 
   /// <summary>
   /// The manifest's checks, the project, then the references in the values that passed them. Returns the values with
@@ -591,7 +637,11 @@ public class ProvisioningRequestService(
       .ToListAsync(cancellationToken);
 
     // Prefer the given requests, whose status may have just changed, over a fresh read.
-    var linkedIds = dependencies.SelectMany(d => new[] { d.RequestId, d.DependsOnId }).Except(ids).Distinct().ToList();
+    var linkedIds = dependencies.SelectMany(d => new[] { d.RequestId, d.DependsOnId })
+      .Concat(requests.Where(r => r.DestroyStoppedById is not null).Select(r => r.DestroyStoppedById!.Value))
+      .Except(ids)
+      .Distinct()
+      .ToList();
     var linked = (await db.ProvisioningRequests.AsNoTracking()
         .Where(x => linkedIds.Contains(x.Id))
         .ToListAsync(cancellationToken))
@@ -602,14 +652,16 @@ public class ProvisioningRequestService(
       r,
       ProjectOf(r),
       [.. dependencies.Where(d => d.RequestId == r.Id).Select(d => linked[d.DependsOnId])],
-      [.. dependencies.Where(d => d.DependsOnId == r.Id).Select(d => linked[d.RequestId])]))];
+      [.. dependencies.Where(d => d.DependsOnId == r.Id).Select(d => linked[d.RequestId])],
+      r.DestroyStoppedById is { } stoppedBy ? linked.GetValueOrDefault(stoppedBy) : null))];
   }
 
   private ProvisioningRequestResponse ToResponse(
     ProvisioningRequest x,
     ProjectLink? project,
     IReadOnlyList<RequestLink> dependsOn,
-    IReadOnlyList<RequestLink> dependents)
+    IReadOnlyList<RequestLink> dependents,
+    RequestLink? destroyStoppedBy)
   {
     var manifest = catalog.Find(x.Type);
 
@@ -635,6 +687,18 @@ public class ProvisioningRequestService(
       x.UpdatedAt,
       x.ConfirmedAt,
       dependsOn,
-      dependents);
+      dependents,
+      destroyStoppedBy);
   }
+
+  /// <summary>A cascading destroy worked out by <see cref="PlanDestroy"/>.</summary>
+  /// <param name="Destroy">What moves to Destroying, in teardown order, the request itself last.</param>
+  /// <param name="Cancel">The proposals that depend on it, which are deleted.</param>
+  /// <param name="WaitFor">What depends on it and is in the runner's hands.</param>
+  /// <param name="Reason">Why the destroy is refused, or null.</param>
+  private sealed record DestroyPlan(
+    List<ProvisioningRequest> Destroy,
+    List<ProvisioningRequest> Cancel,
+    List<ProvisioningRequest> WaitFor,
+    string? Reason);
 }
