@@ -3,7 +3,9 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
-import { useCallback } from "react";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect } from "react";
+import { toast } from "sonner";
 
 import { DestroyButton } from "@/components/requests/destroy-button";
 import { RequestLog } from "@/components/requests/request-log";
@@ -24,7 +26,7 @@ import {
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
-import { ApiError } from "@/lib/api";
+import { isNotFound } from "@/lib/api";
 import type { SessionUser } from "@/lib/auth/types";
 import {
   blockingDependents,
@@ -32,6 +34,7 @@ import {
   formatValue,
   isInProgress,
   linkLabel,
+  type ProvisioningRequest,
   type RequestLink,
   requestName,
   requestPath,
@@ -43,9 +46,13 @@ const dateFormat = new Intl.DateTimeFormat(undefined, {
   timeStyle: "short",
 });
 
+/** Where the page goes once the request it shows has been deleted. */
+const AFTER_DELETED_PATH = "/requests";
+
 /**
  * One request: its status, settings, outputs (secret ones behind a reveal, for the owner), the live Terraform log,
- * and Destroy for the owner or an admin once it's provisioned or has failed.
+ * and Destroy for the owner or an admin once it's provisioned or has failed. Once a destroy finishes the API deletes
+ * the request, so the page then answers 404 and sends the user back to the requests list.
  * @param requestId - the request
  * @param user - the signed-in user, to decide who may reveal secrets and destroy
  * @returns the page content
@@ -57,6 +64,7 @@ export function RequestDetail({
   requestId: string;
   user: Pick<SessionUser, "id" | "isAdmin">;
 }) {
+  const router = useRouter();
   const queryClient = useQueryClient();
   const request = useRequest(requestId);
   const catalog = useCatalog();
@@ -70,13 +78,28 @@ export function RequestDetail({
     });
   }, [queryClient, requestId]);
 
+  // It was here and now isn't: destroyed (or, from another tab, cancelled), so the API deleted it. A failed re-read
+  // keeps the last data, which is how this tells it from a request that never existed.
+  const deleted = request.data !== undefined && isNotFound(request.error);
+  const deletedMessage = request.data ? goneMessage(request.data) : "";
+  useEffect(() => {
+    if (!deleted) return;
+    toast(deletedMessage, { id: `deleted-${requestId}` });
+    router.replace(AFTER_DELETED_PATH);
+  }, [deleted, deletedMessage, requestId, router]);
+
   if (request.isPending) return <RequestDetailSkeleton />;
+  if (deleted) {
+    return (
+      <p role="status" className="text-sm text-muted-foreground">
+        {deletedMessage}. Taking you back to your requests…
+      </p>
+    );
+  }
   if (request.isError) {
-    const notFound =
-      request.error instanceof ApiError && request.error.status === 404;
     return (
       <p role="alert" className="text-sm text-muted-foreground">
-        {notFound
+        {isNotFound(request.error)
           ? "This request doesn't exist, or isn't yours."
           : `Couldn't load this request: ${request.error.message}`}
       </p>
@@ -207,11 +230,20 @@ export function RequestDetail({
             requestId={data.id}
             follow={isInProgress(data.status)}
             onStatus={refresh}
+            onDeleted={refresh}
           />
         </CardContent>
       </Card>
     </div>
   );
+}
+
+function goneMessage(request: ProvisioningRequest): string {
+  const name = requestName(request);
+  const label = name ? `${request.displayName} ${name}` : request.displayName;
+  return request.status === "Destroying"
+    ? `${label} was destroyed`
+    : `${label} no longer exists`;
 }
 
 function Links({ links }: { links: RequestLink[] }) {
