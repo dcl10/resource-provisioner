@@ -116,8 +116,8 @@ that touches sign-in, the agent, the runner or the images.
 10. **A sequence in one go:** in a new conversation, ask for a droplet and a firewall allowing SSH to it, together. The
     agent proposes both; the firewall's card says **Runs after** the droplet. Click **Confirm all (2)**: the droplet is
     provisioned first, the firewall's page says it's waiting for it, then provisions. Destroy both again.
-11. **A project:** ask for a project and a droplet in it, together. The droplet's card says **Runs after** the
-    project; confirm both. In DigitalOcean the droplet is in the new project, not the default one. The project's page
+11. **A project:** ask for a project and a droplet in it, together. The droplet's card names the **Project** and says
+    **Runs after** the project; confirm both. In DigitalOcean the droplet is in the new project, not the default one. The project's page
     lists the droplet under **Needed by** and offers no Destroy until the droplet is destroyed; then destroy the
     project too.
 12. **Limits:** optionally, set `LIMITS_MAX_ACTIVE_REQUESTS_PER_USER=1` in `.env`, run
