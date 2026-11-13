@@ -99,14 +99,14 @@ public partial class TerraformRunner(
 
       await db.SaveChangesAsync(cancellationToken);
 
-      // SQLite (tests) can't order by DateTimeOffset, so sort in memory; active requests are capped, so this is small.
       var pending = await db.ProvisioningRequests.AsNoTracking()
         .Where(x => PendingStatuses.Contains(x.Status))
-        .Select(x => new { x.Id, x.UpdatedAt })
+        .OrderBy(x => x.UpdatedAt)
+        .Select(x => x.Id)
         .ToListAsync(cancellationToken);
-      foreach (var request in pending.OrderBy(x => x.UpdatedAt))
+      foreach (var id in pending)
       {
-        await queue.EnqueueAsync(request.Id, cancellationToken);
+        await queue.EnqueueAsync(id, cancellationToken);
       }
     }
     catch (Exception ex) when (ex is not OperationCanceledException)
