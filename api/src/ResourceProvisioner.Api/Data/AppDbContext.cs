@@ -56,6 +56,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
       // By name, so the column reads well and a reordered enum can't change stored statuses. A concurrency token, so
       // a confirm racing a cancel (or the runner) fails instead of both writing.
       request.Property(x => x.Status).HasConversion<string>().HasMaxLength(32).IsConcurrencyToken();
+      request.Property(x => x.StatusBeforeDestroy).HasConversion<string>().HasMaxLength(32);
 
       request.HasIndex(x => x.OwnerId);
       request.HasIndex(x => x.Status);
