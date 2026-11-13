@@ -76,13 +76,20 @@ public class RequestsController(
     CancellationToken cancellationToken) =>
     Handle(() => requests.ConfirmManyAsync(body.RequestIds, Caller, cancellationToken));
 
-  /// <summary>The owner's cancel, before confirming.</summary>
+  /// <summary>
+  /// The owner's cancel, before confirming. Nothing was created, so the request is deleted, and with a
+  /// <c>project</c> request, its project too: it answers 404 from then on.
+  /// </summary>
   /// <param name="id">Request ID.</param>
   /// <param name="cancellationToken">Cancels the request.</param>
-  /// <returns>The cancelled request.</returns>
+  /// <returns>204 once it's deleted, or a problem.</returns>
   [HttpPost("{id:guid}/cancel")]
-  public Task<ActionResult<ProvisioningRequestResponse>> Cancel(Guid id, CancellationToken cancellationToken) =>
-    Handle(() => requests.CancelAsync(id, Caller, cancellationToken));
+  public Task<ActionResult<object>> Cancel(Guid id, CancellationToken cancellationToken) =>
+    HandleResult<object>(async () =>
+    {
+      await requests.CancelAsync(id, Caller, cancellationToken);
+      return NoContent();
+    });
 
   /// <summary>
   /// Reveals the request's sensitive outputs (passwords, connection URIs, keys) to its owner: an explicit action in the
@@ -111,7 +118,8 @@ public class RequestsController(
   /// <summary>
   /// Streams the request's Terraform log as server-sent events: <c>status</c> (<c>{"status":"Applying"}</c>) first and
   /// on every change, <c>log</c> (<c>{"id","at","stream","text"}</c>, with the line's ID as the event ID) for each line,
-  /// and a final <c>end</c> (<c>{"status"}</c>) once no job is queued or running. A reconnect with
+  /// and a final <c>end</c> (<c>{"status"}</c>) once no job is queued or running, or <c>deleted</c> (<c>{}</c>) if the
+  /// request is destroyed, and so deleted, while the stream is open. A reconnect with
   /// <c>Last-Event-ID</c> resumes after that line. Owner or admin; 404 otherwise.
   /// </summary>
   /// <param name="id">Request ID.</param>
@@ -151,6 +159,7 @@ public class RequestsController(
         },
         RequestLogEventKind.Status => new SseItem<string>(
           JsonSerializer.Serialize(new { status = e.Status }, EventJson), "status"),
+        RequestLogEventKind.Deleted => new SseItem<string>("{}", "deleted"),
         _ => new SseItem<string>(JsonSerializer.Serialize(new { status = e.Status }, EventJson), "end"),
       };
     }

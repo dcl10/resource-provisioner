@@ -18,12 +18,14 @@ using ResourceCatalog;
 /// <param name="catalog">The resource catalog.</param>
 /// <param name="limits">The active-request limits.</param>
 /// <param name="jobs">The runner's queue, which a confirmed request joins.</param>
+/// <param name="deleter">Deletes a cancelled request.</param>
 /// <param name="time">The clock.</param>
 public class ProvisioningRequestService(
   AppDbContext db,
   ICatalogService catalog,
   IOptions<LimitsOptions> limits,
   IJobDispatcher jobs,
+  IRequestDeleter deleter,
   TimeProvider time) : IProvisioningRequestService
 {
   /// <summary>The most requests one confirm-all can take.</summary>
@@ -33,8 +35,8 @@ public class ProvisioningRequestService(
   public const string ProjectErrorKey = "project_id";
 
   /// <summary>
-  /// Statuses a referenced request may be in: pending (it will be provisioned first) or provisioned. Failed,
-  /// cancelled and destroyed requests, and ones being destroyed, can't be built on.
+  /// Statuses a referenced request may be in: pending (it will be provisioned first) or provisioned. Failed requests
+  /// and ones being destroyed can't be built on, and nor can a missing one (cancelled or destroyed, so deleted).
   /// </summary>
   public static readonly IReadOnlyList<RequestStatus> ReferenceableStatuses =
   [
@@ -72,7 +74,8 @@ public class ProvisioningRequestService(
     Guid? conversationId,
     CancellationToken cancellationToken = default)
   {
-    var (values, errors, dependsOn) = await ValidateAsync(owner.UserId, type, variables, projectId, cancellationToken);
+    var (values, errors, dependsOn) =
+      await ValidateAsync(owner.UserId, type, variables, projectId, confirming: false, cancellationToken);
     if (errors.Count > 0)
     {
       return new ProposeResult(null, errors);
@@ -178,8 +181,8 @@ public class ProvisioningRequestService(
       requests.Add(request);
     }
 
-    // The catalog may have changed since they were proposed, and a referenced request may have been cancelled or
-    // destroyed. With several requests, each error's path starts with its request ID.
+    // The catalog may have changed since they were proposed, and a referenced request or the project may have been
+    // cancelled or destroyed, and so deleted. With several requests, each error's path starts with its request ID.
     foreach (var request in requests)
     {
       var (_, errors, _) = await ValidateAsync(
@@ -187,6 +190,7 @@ public class ProvisioningRequestService(
         request.Type,
         JsonNode.Parse(request.Variables)?.AsObject(),
         request.ProjectId,
+        confirming: true,
         cancellationToken);
       if (errors.Count > 0)
       {
@@ -226,18 +230,17 @@ public class ProvisioningRequestService(
   }
 
   /// <inheritdoc />
-  public async Task<ProvisioningRequestResponse> CancelAsync(
-    Guid id,
-    RequestUser user,
-    CancellationToken cancellationToken = default)
+  public async Task CancelAsync(Guid id, RequestUser user, CancellationToken cancellationToken = default)
   {
     var request = await FindOwn(id, user, "cancel", cancellationToken);
-    EnsureCanMove(request, RequestStatus.Cancelled, "cancelled");
+    if (request.Status != RequestStatus.AwaitingConfirmation)
+    {
+      throw new RequestConflictException($"This request is {request.Status}, so it can't be cancelled.");
+    }
 
-    RequestStateMachine.Move(request, RequestStatus.Cancelled, time.GetUtcNow());
-    await Save(cancellationToken);
-
-    return (await ToResponses([request], cancellationToken))[0];
+    // Nothing was created, so nothing is kept. The deleter checks the status again as it deletes, so a confirm that
+    // got there first wins.
+    await deleter.DeleteCancelledAsync(request.Id, cancellationToken);
   }
 
   /// <inheritdoc />
@@ -293,13 +296,15 @@ public class ProvisioningRequestService(
   /// <summary>
   /// The manifest's checks, the project, then the references in the values that passed them. Returns the values with
   /// defaults applied, every error by field path, and the requests it depends on: its project's request first, then
-  /// those it references.
+  /// those it references. A project or reference that's missing (cancelled or destroyed, so deleted) is an error, as
+  /// is one that's failed or being destroyed.
   /// </summary>
   private async Task<(JsonObject Values, Dictionary<string, string[]> Errors, List<Guid> DependsOn)> ValidateAsync(
     string ownerId,
     string type,
     JsonObject? variables,
     Guid? projectId,
+    bool confirming,
     CancellationToken cancellationToken)
   {
     var result = catalog.ValidateVariables(type, variables);
@@ -308,7 +313,8 @@ public class ProvisioningRequestService(
 
     if (catalog.Find(type) is { } manifest)
     {
-      var (projectError, projectRequestId) = await CheckProject(ownerId, type, projectId, cancellationToken);
+      var (projectError, projectRequestId) =
+        await CheckProject(ownerId, type, projectId, confirming, cancellationToken);
       if (projectError is not null)
       {
         errors[ProjectErrorKey] = [projectError];
@@ -340,6 +346,7 @@ public class ProvisioningRequestService(
     string ownerId,
     string type,
     Guid? projectId,
+    bool confirming,
     CancellationToken cancellationToken)
   {
     if (type == Project.RequestType)
@@ -349,7 +356,12 @@ public class ProvisioningRequestService(
 
     if (projectId is not { } id)
     {
-      return ("Required: the ID of one of your projects to put this in.", null);
+      // At confirm, a request with no project is from before projects, or its project was cancelled or destroyed
+      // (and so deleted) while it waited.
+      return (confirming
+        ? "It isn't in a project any more (its project may have been cancelled or destroyed); ask for it again in " +
+          "one of your projects."
+        : "Required: the ID of one of your projects to put this in.", null);
     }
 
     var project = await db.Projects.AsNoTracking()

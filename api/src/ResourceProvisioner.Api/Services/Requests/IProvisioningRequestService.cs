@@ -97,18 +97,19 @@ public interface IProvisioningRequestService
     RequestUser user,
     CancellationToken cancellationToken = default);
 
-  /// <summary>The owner's cancel, before confirming: moves the request to <see cref="RequestStatus.Cancelled"/>.</summary>
+  /// <summary>
+  /// The owner's cancel, before confirming: deletes the request and everything stored for it (and the project it
+  /// backs, for a <c>project</c> request), since nothing was ever created. Proposals that depended on it are kept but
+  /// can no longer be confirmed.
+  /// </summary>
   /// <param name="id">Request ID.</param>
   /// <param name="user">The signed-in user; must be the owner.</param>
   /// <param name="cancellationToken">Cancels the call.</param>
-  /// <returns>The updated request.</returns>
+  /// <returns>A task that completes once it's deleted.</returns>
   /// <exception cref="KeyNotFoundException">No such request the user can see.</exception>
   /// <exception cref="RequestForbiddenException">An admin cancelling someone else's request.</exception>
   /// <exception cref="RequestConflictException">It isn't awaiting confirmation, or changed meanwhile.</exception>
-  Task<ProvisioningRequestResponse> CancelAsync(
-    Guid id,
-    RequestUser user,
-    CancellationToken cancellationToken = default);
+  Task CancelAsync(Guid id, RequestUser user, CancellationToken cancellationToken = default);
 
   /// <summary>
   /// The owner's explicit reveal of a request's sensitive outputs (passwords, connection URIs, keys). Owner only, admins
