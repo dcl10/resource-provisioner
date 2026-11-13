@@ -6,8 +6,8 @@ using Services.Terraform;
 
 /// <summary>
 /// Stands in for the Terraform CLI: records each command and plays back scripted output and exit codes per
-/// subcommand (<c>init</c>, <c>plan</c>, <c>apply</c>, <c>output</c>). Every command succeeds by default, and
-/// <c>output</c> returns <see cref="DefaultOutputJson"/>.
+/// subcommand (<c>init</c>, <c>plan</c>, <c>apply</c>, <c>output</c>), for every request or for one. Every command
+/// succeeds by default, and <c>output</c> returns <see cref="DefaultOutputJson"/>.
 /// </summary>
 public class FakeTerraform : ITerraformProcessRunner
 {
@@ -32,6 +32,17 @@ public class FakeTerraform : ITerraformProcessRunner
   public void Script(string subcommand, int exitCode, params (LogSource Source, string Text)[] lines) =>
     _scripts[subcommand] = new Script(exitCode, lines);
 
+  /// <summary>
+  /// Sets what a subcommand prints and returns for one request (run in its workspace), over any
+  /// <see cref="Script(string, int, (LogSource Source, string Text)[])"/> for every request.
+  /// </summary>
+  /// <param name="requestId">The request.</param>
+  /// <param name="subcommand">The first argument, such as <c>destroy</c>.</param>
+  /// <param name="exitCode">Its exit code.</param>
+  /// <param name="lines">The lines it prints, in order.</param>
+  public void Script(Guid requestId, string subcommand, int exitCode, params (LogSource Source, string Text)[] lines) =>
+    _scripts[$"{requestId}/{subcommand}"] = new Script(exitCode, lines);
+
   /// <summary>Forgets scripts and invocations, so each test starts from the defaults.</summary>
   public void Reset()
   {
@@ -49,7 +60,9 @@ public class FakeTerraform : ITerraformProcessRunner
   {
     Invocations.Enqueue(new Invocation(workingDirectory, [.. arguments], new Dictionary<string, string>(environment)));
 
-    var script = _scripts.GetValueOrDefault(arguments[0]) ?? Default(arguments[0]);
+    var script = _scripts.GetValueOrDefault($"{Path.GetFileName(workingDirectory)}/{arguments[0]}") ??
+                 _scripts.GetValueOrDefault(arguments[0]) ??
+                 Default(arguments[0]);
     foreach (var (source, text) in script.Lines)
     {
       await onLine(source, text);
