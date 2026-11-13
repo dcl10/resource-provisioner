@@ -112,7 +112,8 @@ that touches sign-in, the agent, the runner or the images.
    the reveal, ask for a Spaces bucket or a Postgres database: its request page masks the keys or passwords until the
    owner clicks **Reveal secrets**. Signed in as the admin, that request has no reveal at all. Destroy it afterwards.
 9. **Destroy both:** destroy the firewall, then the droplet, from their request pages. Each confirms in a dialog, then
-   streams `terraform destroy` and ends **Destroyed**. Nothing is left in DigitalOcean.
+   streams `terraform destroy`; once it's done the request is deleted and the page goes back to the requests list,
+   where it's no longer listed. Nothing is left in DigitalOcean, and its chat card now says **No longer exists**.
 10. **A sequence in one go:** in a new conversation, ask for a droplet and a firewall allowing SSH to it, together. The
     agent proposes both; the firewall's card says **Runs after** the droplet. Click **Confirm all (2)**: the droplet is
     provisioned first, the firewall's page says it's waiting for it, then provisions. Destroy both again.
