@@ -24,6 +24,7 @@ using Terraform;
 /// <param name="catalog">The resource catalog.</param>
 /// <param name="terraform">Runs the CLI.</param>
 /// <param name="stateStore">Where Terraform keeps state.</param>
+/// <param name="deleter">Deletes a request once it's destroyed.</param>
 /// <param name="workspaces">Where workspaces go.</param>
 /// <param name="digitalOcean">The DigitalOcean token, passed to Terraform in its environment.</param>
 /// <param name="spaces">The Spaces keys, passed to Terraform in its environment.</param>
@@ -34,6 +35,7 @@ public partial class TerraformJobProcessor(
   ICatalogService catalog,
   ITerraformProcessRunner terraform,
   ITerraformStateStore stateStore,
+  IRequestDeleter deleter,
   IOptions<WorkspacesOptions> workspaces,
   IOptions<DigitalOceanOptions> digitalOcean,
   IOptions<SpacesOptions> spaces,
@@ -124,7 +126,7 @@ public partial class TerraformJobProcessor(
 
   /// <summary>
   /// Whether a queued request can be applied: everything it depends on has succeeded. If one never will (it failed,
-  /// was cancelled, or is going or gone), the request moves to Failed without running. Otherwise it waits, and the
+  /// is being destroyed, or no longer exists), the request moves to Failed without running. Otherwise it waits, and the
   /// runner queues it again when the next of its dependencies finishes.
   /// </summary>
   private async Task<bool> DependenciesReady(ProvisioningRequest request, CancellationToken cancellationToken)
@@ -137,14 +139,19 @@ public partial class TerraformJobProcessor(
       .Where(x => dependencyIds.Contains(x.Id))
       .ToListAsync(cancellationToken);
 
+    // A missing one was cancelled or destroyed, and so deleted. Deleting a request deletes the dependencies on it, so
+    // this only catches one deleted between the two reads, but it fails the request just as a destroyed one did.
+    var missing = dependencyIds.Except(dependencies.Select(d => d.Id)).FirstOrDefault();
     var broken = dependencies.FirstOrDefault(d =>
       !ProvisioningRequestService.ReferenceableStatuses.Contains(d.Status));
-    if (broken is not null)
+    var reason = missing != Guid.Empty
+      ? $"request {missing}, which it depends on, no longer exists"
+      : broken is not null
+        ? $"{RequestLinks.Describe(RequestLinks.For(broken, catalog))}, which it depends on, is {broken.Status}"
+        : null;
+    if (reason is not null)
     {
-      var link = RequestLinks.For(broken, catalog);
-      await AppendLog(request.Id, LogSource.System,
-        $"Failed: didn't run, because {RequestLinks.Describe(link)}, which it depends on, is {broken.Status}.",
-        CancellationToken.None);
+      await AppendLog(request.Id, LogSource.System, $"Failed: didn't run, because {reason}.", CancellationToken.None);
       RequestStateMachine.Move(request, RequestStatus.Failed, time.GetUtcNow());
       await db.SaveChangesAsync(CancellationToken.None);
       return false;
@@ -272,11 +279,10 @@ public partial class TerraformJobProcessor(
         CancellationToken.None);
     }
 
-    // The resource is gone, and so are the credentials its outputs held.
-    request.Outputs = null;
-    await db.RequestSensitiveOutputs.Where(x => x.RequestId == request.Id).ExecuteDeleteAsync(CancellationToken.None);
-    RequestStateMachine.Move(request, RequestStatus.Destroyed, time.GetUtcNow());
-    await db.SaveChangesAsync(CancellationToken.None);
+    // Nothing is left, so nothing is kept: the request goes, with its outputs, log, dependencies, project and state,
+    // in one transaction. Not cancellable: the resources are already gone.
+    await deleter.DeleteDestroyedAsync(request.Id, CancellationToken.None);
+    db.Entry(request).State = EntityState.Detached;
   }
 
   /// <summary>

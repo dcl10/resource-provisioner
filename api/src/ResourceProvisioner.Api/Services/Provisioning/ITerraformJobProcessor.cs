@@ -5,8 +5,9 @@ public interface ITerraformJobProcessor
 {
   /// <summary>
   /// Applies a <c>Queued</c> request (<c>Applying</c>, then <c>Succeeded</c> with its outputs stored, or
-  /// <c>Failed</c>) or destroys a <c>Destroying</c> one (<c>Destroyed</c> with its outputs cleared, or <c>Failed</c>).
-  /// A request in any other status is left alone, so a duplicate or stale queue entry is harmless.
+  /// <c>Failed</c>) or destroys a <c>Destroying</c> one (then deletes it with everything stored for it, its Terraform
+  /// state included, or moves it to <c>Failed</c> keeping it all). A request in any other status, or one that no
+  /// longer exists, is left alone, so a duplicate or stale queue entry is harmless.
   /// </summary>
   /// <param name="requestId">Request ID.</param>
   /// <param name="cancellationToken">Stops the job (the app is shutting down); the request is left as it is.</param>
