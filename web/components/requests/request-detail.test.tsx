@@ -179,7 +179,7 @@ describe("RequestDetail", () => {
     ).toHaveAttribute("href", "/requests/req-2");
   });
 
-  it("replaces Destroy with what to destroy first while something depends on it", async () => {
+  it("offers Destroy while something depends on it, since the destroy takes that too", async () => {
     mockApi(
       testRequest("Succeeded", {
         dependents: [
@@ -196,13 +196,49 @@ describe("RequestDetail", () => {
     renderDetail();
 
     expect(
-      await screen.findByText(/To destroy this, first destroy/),
-    ).toHaveTextContent(
-      "first destroy Cloud firewall web-fw, which depends on it.",
+      await screen.findByRole("button", { name: "Destroy" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/first destroy/)).not.toBeInTheDocument();
+  });
+
+  it("shows a failed destroy and offers to retry it", async () => {
+    mockApi(testRequest("DestroyFailed"));
+    renderDetail();
+
+    expect(await screen.findByText("Destroy failed")).toHaveAttribute(
+      "data-status",
+      "DestroyFailed",
     );
     expect(
-      screen.queryByRole("button", { name: "Destroy" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: "Retry destroy" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/A retry destroys only this and what depends on it/),
+    ).toBeInTheDocument();
+  });
+
+  it("says which request's failed destroy stopped this one's", async () => {
+    mockApi(
+      testRequest("Succeeded", {
+        destroyStoppedBy: {
+          id: "req-2",
+          type: "firewall",
+          displayName: "Cloud firewall",
+          name: "web-fw",
+          status: "DestroyFailed",
+        },
+      }),
+    );
+    renderDetail();
+
+    expect(
+      await screen.findByText(/Destroy stopped because/),
+    ).toHaveTextContent(
+      "Destroy stopped because Cloud firewall web-fw failed to destroy.",
+    );
+    expect(
+      screen.getByRole("link", { name: "Cloud firewall web-fw" }),
+    ).toHaveAttribute("href", "/requests/req-2");
   });
 
   it("offers Destroy when only a proposal depends on it", async () => {
