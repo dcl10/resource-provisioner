@@ -23,7 +23,7 @@ public class CatalogControllerTests(ApiFactory factory) : IClassFixture<ApiFacto
     Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     var types = JsonNode.Parse(await response.Content.ReadAsStringAsync())!.AsArray();
     Assert.Equal(
-      ["test-database", "test-firewall", "test-group", "test-server"],
+      ["project", "test-database", "test-firewall", "test-group", "test-server"],
       types.Select(t => t!["id"]!.GetValue<string>()));
   }
 
