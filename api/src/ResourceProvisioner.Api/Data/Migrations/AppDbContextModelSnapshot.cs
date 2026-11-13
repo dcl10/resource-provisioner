@@ -216,6 +216,9 @@ namespace ResourceProvisioner.Api.Data.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("DestroyStoppedById")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Outputs")
                         .HasColumnType("text");
 
@@ -234,6 +237,10 @@ namespace ResourceProvisioner.Api.Data.Migrations
                     b.Property<string>("Status")
                         .IsConcurrencyToken()
                         .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("StatusBeforeDestroy")
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)");
 
