@@ -28,6 +28,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { isNotFound } from "@/lib/api";
 import type { SessionUser } from "@/lib/auth/types";
+import { PROJECT_TYPE, projectPath } from "@/lib/projects";
 import {
   blockingDependents,
   canDestroy,
@@ -46,13 +47,26 @@ const dateFormat = new Intl.DateTimeFormat(undefined, {
   timeStyle: "short",
 });
 
-/** Where the page goes once the request it shows has been deleted. */
-const AFTER_DELETED_PATH = "/requests";
+/**
+ * Where the page goes once the request it shows has been deleted: its project's page, or the projects list for a
+ * `project` request (whose project goes with it), or the requests list for one that had no project.
+ */
+function afterDeleted(request: ProvisioningRequest): {
+  path: string;
+  label: string;
+} {
+  if (request.type === PROJECT_TYPE)
+    return { path: "/projects", label: "your projects" };
+  if (request.project)
+    return { path: projectPath(request.project.id), label: "its project" };
+  return { path: "/requests", label: "your requests" };
+}
 
 /**
  * One request: its status, settings, outputs (secret ones behind a reveal, for the owner), the live Terraform log,
- * and Destroy for the owner or an admin once it's provisioned or has failed. Once a destroy finishes the API deletes
- * the request, so the page then answers 404 and sends the user back to the requests list.
+ * and Destroy for the owner or an admin once it's provisioned or has failed, with a link to its project. Once a
+ * destroy finishes the API deletes the request, so the page then answers 404 and sends the user to its project (or,
+ * for a project's own request or one without a project, to the projects or requests list).
  * @param requestId - the request
  * @param user - the signed-in user, to decide who may reveal secrets and destroy
  * @returns the page content
@@ -82,17 +96,19 @@ export function RequestDetail({
   // keeps the last data, which is how this tells it from a request that never existed.
   const deleted = request.data !== undefined && isNotFound(request.error);
   const deletedMessage = request.data ? goneMessage(request.data) : "";
+  const destination = request.data ? afterDeleted(request.data) : null;
+  const destinationPath = destination?.path;
   useEffect(() => {
-    if (!deleted) return;
+    if (!deleted || !destinationPath) return;
     toast(deletedMessage, { id: `deleted-${requestId}` });
-    router.replace(AFTER_DELETED_PATH);
-  }, [deleted, deletedMessage, requestId, router]);
+    router.replace(destinationPath);
+  }, [deleted, deletedMessage, destinationPath, requestId, router]);
 
   if (request.isPending) return <RequestDetailSkeleton />;
   if (deleted) {
     return (
       <p role="status" className="text-sm text-muted-foreground">
-        {deletedMessage}. Taking you back to your requests…
+        {deletedMessage}. Taking you back to {destination?.label}…
       </p>
     );
   }
@@ -149,6 +165,17 @@ export function RequestDetail({
             : ""}
           {isOwner ? "" : ` · Owner: ${data.ownerEmail ?? data.ownerId}`}
         </p>
+        {data.project ? (
+          <p className="text-sm">
+            {data.type === PROJECT_TYPE ? "Backs project " : "Project: "}
+            <Link
+              href={projectPath(data.project.id)}
+              className="font-mono underline underline-offset-4"
+            >
+              {data.project.name}
+            </Link>
+          </p>
+        ) : null}
         {waiting.length > 0 ? (
           <p className="text-sm" aria-live="polite">
             Waiting for <Links links={waiting} /> to be provisioned first.
