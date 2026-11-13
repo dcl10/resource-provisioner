@@ -13,8 +13,8 @@ using Services.Provisioning;
 using Xunit;
 
 /// <summary>
-/// Requests that depend on other requests: confirming them (one by one or all at once), destroying what others depend
-/// on, and the runner applying them in order. A <c>test-database</c> depends on a <c>test-server</c>, as a postgres
+/// Requests that depend on other requests: confirming them (one by one or all at once), destroying what others
+/// depended on, and the runner applying them in order. Cascading destroys are in <c>CascadingDestroyTests</c>. A <c>test-database</c> depends on a <c>test-server</c>, as a postgres
 /// database or a firewall depends on a droplet.
 /// </summary>
 public class SequencedProvisioningTests : IClassFixture<HighLimitApiFactory>
@@ -132,32 +132,6 @@ public class SequencedProvisioningTests : IClassFixture<HighLimitApiFactory>
     var response = await User.PostAsJsonAsync($"{Route}/confirm", new { requestIds = Array.Empty<Guid>() });
 
     Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-  }
-
-  [Theory]
-  [InlineData(RequestStatus.Queued)]
-  [InlineData(RequestStatus.Succeeded)]
-  [InlineData(RequestStatus.Failed)]
-  public async Task Destroy_ReturnsConflict_WhileSomethingDependsOnIt(RequestStatus databaseStatus)
-  {
-    var (server, database) = await SeedPair(RequestStatus.Succeeded, databaseStatus);
-
-    var response = await User.PostAsync($"{Route}/{server.Id}/destroy", null);
-
-    Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
-    var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
-    Assert.Equal($"Destroy what depends on it first: Test database \"db\" ({database.Id}).", problem!.Detail);
-    Assert.Equal(RequestStatus.Succeeded, (await _factory.FindRequestAsync(server.Id))!.Status);
-  }
-
-  [Fact]
-  public async Task Destroy_IsAllowed_WhenOnlyAProposalDependsOnIt()
-  {
-    var (server, _) = await SeedPair(RequestStatus.Succeeded, RequestStatus.AwaitingConfirmation);
-
-    var response = await User.PostAsync($"{Route}/{server.Id}/destroy", null);
-
-    Assert.Equal(HttpStatusCode.OK, response.StatusCode);
   }
 
   [Fact]
