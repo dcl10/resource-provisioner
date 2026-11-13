@@ -83,7 +83,7 @@ public class TerraformRunnerTests : IClassFixture<ApiFactory>, IClassFixture<NoT
 
     await using (await Start(new JobDispatcher()))
     {
-      await WaitFor(request.Id, RequestStatus.Destroyed);
+      await WaitForDeleted(request.Id);
     }
 
     Assert.Contains(_factory.Terraform.Invocations, i => i.Arguments[0] == "destroy");
@@ -138,6 +138,15 @@ public class TerraformRunnerTests : IClassFixture<ApiFactory>, IClassFixture<NoT
   {
     using var cts = new CancellationTokenSource(Timeout);
     while ((await factory.FindRequestAsync(id))!.Status != status)
+    {
+      await Task.Delay(20, cts.Token);
+    }
+  }
+
+  private async Task WaitForDeleted(Guid id)
+  {
+    using var cts = new CancellationTokenSource(Timeout);
+    while (await _factory.FindRequestAsync(id) is not null)
     {
       await Task.Delay(20, cts.Token);
     }
