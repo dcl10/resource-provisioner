@@ -259,31 +259,75 @@ describe("RequestDetail", () => {
     expect(replace).not.toHaveBeenCalled();
   });
 
-  it("goes back to the requests list once a destroy deletes the request", async () => {
-    let deleted = false;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string) => {
-        if (url.endsWith("/catalog")) return jsonResponse(catalog);
-        if (url.endsWith("/logs")) {
-          // The runner finishes the destroy and deletes the request while the log is open.
-          deleted = true;
-          return sseResponse([
-            sseEvent("status", { status: "Destroying" }),
-            sseEvent("deleted", {}),
-          ]);
-        }
-        return deleted
-          ? jsonResponse({ detail: "Request req-1 doesn't exist." }, 404)
-          : jsonResponse(testRequest("Destroying"));
-      }),
+  it("links to its project", async () => {
+    mockApi(
+      testRequest("Succeeded", { project: { id: "prj-1", name: "shop" } }),
     );
     renderDetail();
 
-    await waitFor(() => expect(replace).toHaveBeenCalledWith("/requests"));
-    expect(
-      await screen.findByText(/Droplet web-1 was destroyed\. Taking you back/),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "shop" })).toHaveAttribute(
+      "href",
+      "/projects/prj-1",
+    );
   });
+
+  it.each([
+    {
+      when: "it was in a project",
+      overrides: { project: { id: "prj-1", name: "shop" } },
+      path: "/projects/prj-1",
+      label: "its project",
+      gone: "Droplet web-1",
+    },
+    {
+      when: "it backed a project, which went with it",
+      overrides: {
+        type: "project",
+        displayName: "Project",
+        variables: { name: "shop" },
+        project: { id: "prj-1", name: "shop" },
+      },
+      path: "/projects",
+      label: "your projects",
+      gone: "Project shop",
+    },
+    {
+      when: "it had no project",
+      overrides: {},
+      path: "/requests",
+      label: "your requests",
+      gone: "Droplet web-1",
+    },
+  ])(
+    "goes to $path once a destroy deletes the request when $when",
+    async ({ overrides, path, label, gone }) => {
+      let deleted = false;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) => {
+          if (url.endsWith("/catalog")) return jsonResponse(catalog);
+          if (url.endsWith("/logs")) {
+            // The runner finishes the destroy and deletes the request while the log is open.
+            deleted = true;
+            return sseResponse([
+              sseEvent("status", { status: "Destroying" }),
+              sseEvent("deleted", {}),
+            ]);
+          }
+          return deleted
+            ? jsonResponse({ detail: "Request req-1 doesn't exist." }, 404)
+            : jsonResponse(testRequest("Destroying", overrides));
+        }),
+      );
+      renderDetail();
+
+      await waitFor(() => expect(replace).toHaveBeenCalledWith(path));
+      expect(
+        await screen.findByText(
+          `${gone} was destroyed. Taking you back to ${label}…`,
+        ),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    },
+  );
 });

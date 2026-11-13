@@ -39,6 +39,8 @@ export interface ProvisioningRequest {
   status: RequestStatus;
   variables: Record<string, unknown>;
   outputs: Record<string, unknown> | null;
+  /** The project it belongs to; for a `project` request, the project it backs. Null only for one from before projects. */
+  project: ProjectLink | null;
   conversationId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -202,6 +204,21 @@ export function cancelRequest(id: string): Promise<void> {
   return apiFetch<void>(`/requests/${encodeURIComponent(id)}/cancel`, {
     method: "POST",
   });
+}
+
+/**
+ * The requests in a project, with the `project` request that backs it: those whose project it is.
+ * @param requests - the requests
+ * @param projectId - the project, or null for every request
+ * @returns the matching requests, in the same order
+ */
+export function inProject(
+  requests: ProvisioningRequest[],
+  projectId: string | null,
+): ProvisioningRequest[] {
+  return projectId === null
+    ? requests
+    : requests.filter((r) => r.project?.id === projectId);
 }
 
 /**

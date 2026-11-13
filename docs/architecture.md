@@ -18,7 +18,7 @@ web (Next.js + Auth.js) ──Bearer JWT (via /api/proxy)──▶ api (ASP.NET 
 
 | Component | Role |
 | --- | --- |
-| `web/` | Chat page, requests list and detail, admin Users page. A `/api/proxy/[...path]` route attaches the session's access token (and passes SSE through), so the browser never holds the API token. |
+| `web/` | Chat page, projects list and pages, requests list and detail, admin Users page. A `/api/proxy/[...path]` route attaches the session's access token (and passes SSE through), so the browser never holds the API token. |
 | `api/` | Auth and policies, invitations, catalog, the Claude agent, projects, provisioning requests and the Terraform runner. |
 | `catalog/<type>/` | `main.tf`, `variables.tf`, `outputs.tf` and a `resource.json` manifest for each supported resource type. |
 | `keycloak/` | `realm-export.json` for the `resource-provisioner` realm, imported on first start. |
