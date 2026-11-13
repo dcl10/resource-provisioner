@@ -31,6 +31,7 @@ function request(status: RequestStatus): ProvisioningRequest {
     status,
     variables: { name: "web-1", region: "lon1" },
     outputs: null,
+    project: null,
     conversationId: "conv-1",
     createdAt: "2026-11-07T10:00:00Z",
     updatedAt: "2026-11-07T10:00:00Z",
@@ -157,7 +158,7 @@ describe("ProposalCard", () => {
     );
   });
 
-  it("names the project it goes in", () => {
+  it("names the project it goes in, linking to it", () => {
     mockApi("AwaitingConfirmation");
     render(
       <Providers>
@@ -169,6 +170,10 @@ describe("ProposalCard", () => {
 
     const line = screen.getByText("Project:").closest("p")!;
     expect(line).toHaveTextContent("Project: shop");
+    expect(within(line).getByRole("link", { name: "shop" })).toHaveAttribute(
+      "href",
+      "/projects/prj-1",
+    );
   });
 
   it("doesn't name a project request's own project again", () => {
