@@ -63,6 +63,19 @@ export function getProject(id: string): Promise<ProjectDetail> {
 }
 
 /**
+ * Deletes a project: a cascading destroy of its `project` request, so everything in it is destroyed first and every
+ * proposal in it cancelled. Once the runner is done the project is gone (404). Owner or admin; 409 for a project still
+ * awaiting confirmation, or while something in it is still running. The plan is its `project` request's destroy plan.
+ * @param id - the project ID
+ * @returns the project, now Destroying
+ */
+export function deleteProject(id: string): Promise<ProjectDetail> {
+  return apiFetch<ProjectDetail>(`/projects/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+/**
  * Creates a project: proposes its `project` request and confirms it in one step, since submitting the form is the
  * user's confirmation. Fails with 422 when the variables aren't valid, or 409 over a limit.
  * @param variables - the `project` request's variables, by name
