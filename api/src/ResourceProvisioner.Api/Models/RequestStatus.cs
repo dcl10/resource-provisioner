@@ -22,9 +22,21 @@ public enum RequestStatus
   /// <summary>Provisioned; the resource exists and its outputs are stored.</summary>
   Succeeded,
 
-  /// <summary>Applying or destroying failed. Resources may be left behind, so it can still be destroyed.</summary>
+  /// <summary>
+  /// Applying failed, or it never ran because something it depends on failed. Resources may be left behind, so it can
+  /// still be destroyed.
+  /// </summary>
   Failed,
 
-  /// <summary>The runner is destroying the resource. Once it's destroyed, the request is deleted.</summary>
+  /// <summary>
+  /// Waiting for what depends on it to be destroyed, or being destroyed by the runner. Once it's destroyed, the request
+  /// is deleted.
+  /// </summary>
   Destroying,
+
+  /// <summary>
+  /// <c>terraform destroy</c> failed (or couldn't run), so its resources may still exist. Everything is kept, its
+  /// Terraform state above all, so it can be destroyed again.
+  /// </summary>
+  DestroyFailed,
 }

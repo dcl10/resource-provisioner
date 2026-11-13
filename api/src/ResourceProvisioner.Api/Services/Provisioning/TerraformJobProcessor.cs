@@ -18,7 +18,8 @@ using Terraform;
 /// then runs <c>init</c>, <c>workspace select &lt;requestId&gt;</c> and <c>destroy -auto-approve</c>. State is in the
 /// app database (<see cref="ITerraformStateStore"/>), in a Terraform workspace named by the request ID, so nothing on
 /// disk outlives a job. Every line of output is saved as a <see cref="JobLogLine"/>
-/// except <c>output</c>'s, which holds secrets.
+/// except <c>output</c>'s, which holds secrets. Both wait for other requests: an apply until everything it depends on
+/// has succeeded, a destroy until everything that depends on it has gone.
 /// </summary>
 /// <param name="db">The app database.</param>
 /// <param name="catalog">The resource catalog.</param>
@@ -65,12 +66,25 @@ public partial class TerraformJobProcessor(
           return;
         }
 
-        await Guarded(request, () => ApplyAsync(request, cancellationToken), cancellationToken);
+        await Guarded(
+          request,
+          () => ApplyAsync(request, cancellationToken),
+          reason => Fail(request, reason),
+          cancellationToken);
         break;
 
       // Destroy moved it to Destroying before queueing it, so there's no move to make here.
       case RequestStatus.Destroying:
-        await Guarded(request, () => DestroyAsync(request, cancellationToken), cancellationToken);
+        if (!await ReadyToDestroy(request, cancellationToken))
+        {
+          return;
+        }
+
+        await Guarded(
+          request,
+          () => DestroyAsync(request, cancellationToken),
+          reason => FailDestroy(request, reason),
+          cancellationToken);
         break;
 
       default:
@@ -166,8 +180,85 @@ public partial class TerraformJobProcessor(
     return true;
   }
 
-  /// <summary>Runs a job's work, moving the request to <c>Failed</c> with a log line if it throws.</summary>
-  private async Task Guarded(ProvisioningRequest request, Func<Task> work, CancellationToken cancellationToken)
+  /// <summary>
+  /// Whether a destroying request can be destroyed now: nothing that may exist depends on it any more. Its
+  /// dependents in the same cascade go first, so while one is still in the runner's hands it waits, and the runner
+  /// queues it again when that one's job ends. If one is settled instead (it failed to destroy, or is otherwise still
+  /// there), it never will be, so its destroy stops: it and whatever is waiting on it go back to the status they had,
+  /// untouched. Proposals don't count; deleting it unlinks them.
+  /// </summary>
+  private async Task<bool> ReadyToDestroy(ProvisioningRequest request, CancellationToken cancellationToken)
+  {
+    var dependentIds = await RequestGraph.DependentIdsAsync(db, [request.Id], cancellationToken);
+    var dependents = await db.ProvisioningRequests.AsNoTracking()
+      .Where(x => dependentIds.Contains(x.Id) && x.Status != RequestStatus.AwaitingConfirmation)
+      .OrderBy(x => x.CreatedAt)
+      .ToListAsync(cancellationToken);
+    if (dependents.Count == 0)
+    {
+      return true;
+    }
+
+    // The eager stop in FailDestroy normally gets here first; this catches what it couldn't, such as a dependent
+    // that went back before this request's job ran.
+    if (dependents.FirstOrDefault(d => RequestStateMachine.DestroyableStatuses.Contains(d.Status)) is { } settled)
+    {
+      var line = settled.Status == RequestStatus.DestroyFailed
+        ? StoppedLine(settled)
+        : $"Destroy stopped: {RequestLinks.Describe(RequestLinks.For(settled, catalog))}, which depends on it, is " +
+          $"{settled.Status}, so it isn't being destroyed.";
+      await StopDestroys([request.Id], settled.Id, line, cancellationToken);
+      await db.SaveChangesAsync(CancellationToken.None);
+      return false;
+    }
+
+    LogWaitingForDependents(logger, request.Id);
+    return false;
+  }
+
+  /// <summary>
+  /// Moves the given requests, if they're Destroying, and everything Destroying that they depend on, directly or
+  /// not, back to the status each had (<see cref="RequestStateMachine.RevertDestroy"/>), with
+  /// <paramref name="line"/> in each one's log. They were waiting for <paramref name="stoppedById"/> to go, and it
+  /// won't, so none of them can be destroyed; nothing was done to them. Not saved: the caller saves it together with
+  /// whatever stopped them.
+  /// </summary>
+  private async Task StopDestroys(
+    List<Guid> ids,
+    Guid stoppedById,
+    string line,
+    CancellationToken cancellationToken)
+  {
+    var seen = new HashSet<Guid>();
+    var now = time.GetUtcNow();
+    var frontier = ids;
+    while (frontier.Count > 0)
+    {
+      var waiting = await db.ProvisioningRequests
+        .Where(x => frontier.Contains(x.Id) && x.Status == RequestStatus.Destroying)
+        .ToListAsync(cancellationToken);
+      waiting = [.. waiting.Where(w => seen.Add(w.Id))];
+      foreach (var request in waiting)
+      {
+        RequestStateMachine.RevertDestroy(request, stoppedById, now);
+        db.JobLogLines.Add(new JobLogLine { RequestId = request.Id, At = now, Stream = LogSource.System, Text = line });
+      }
+
+      frontier = waiting.Count == 0
+        ? []
+        : await RequestGraph.DependencyIdsAsync(db, [.. waiting.Select(w => w.Id)], cancellationToken);
+    }
+  }
+
+  private string StoppedLine(ProvisioningRequest failed) =>
+    $"Destroy stopped: {RequestLinks.Describe(RequestLinks.For(failed, catalog))} failed to destroy.";
+
+  /// <summary>Runs a job's work, calling <paramref name="fail"/> with the reason if it throws.</summary>
+  private async Task Guarded(
+    ProvisioningRequest request,
+    Func<Task> work,
+    Func<string, Task> fail,
+    CancellationToken cancellationToken)
   {
     try
     {
@@ -180,12 +271,12 @@ public partial class TerraformJobProcessor(
     }
     catch (JobFailedException ex)
     {
-      await Fail(request, ex.Message);
+      await fail(ex.Message);
     }
     catch (Exception ex)
     {
       LogUnexpected(logger, ex, request.Id);
-      await Fail(request, "The runner hit an unexpected error; an admin can find the details in the API's logs.");
+      await fail("The runner hit an unexpected error; an admin can find the details in the API's logs.");
     }
   }
 
@@ -383,6 +474,30 @@ public partial class TerraformJobProcessor(
     await db.SaveChangesAsync(CancellationToken.None);
   }
 
+  /// <summary>
+  /// A destroy that failed, or couldn't run: the request moves to DestroyFailed keeping everything, its state above
+  /// all, since its resources may still exist. What was waiting for it to go (what it depends on, in the same
+  /// cascade) can't be destroyed now, so those go back to the status they had, all in one save.
+  /// </summary>
+  private async Task FailDestroy(ProvisioningRequest request, string reason)
+  {
+    await AppendLog(request.Id, LogSource.System, $"Failed: {reason}", CancellationToken.None);
+
+    // A failed delete after a successful destroy may have left it detached.
+    if (db.Entry(request).State == EntityState.Detached)
+    {
+      request = await db.ProvisioningRequests.SingleAsync(x => x.Id == request.Id, CancellationToken.None);
+    }
+
+    RequestStateMachine.Move(request, RequestStatus.DestroyFailed, time.GetUtcNow());
+    await StopDestroys(
+      await RequestGraph.DependencyIdsAsync(db, [request.Id], CancellationToken.None),
+      request.Id,
+      StoppedLine(request),
+      CancellationToken.None);
+    await db.SaveChangesAsync(CancellationToken.None);
+  }
+
   private async Task AppendLog(Guid requestId, LogSource stream, string text, CancellationToken cancellationToken)
   {
     var line = new JobLogLine { RequestId = requestId, At = time.GetUtcNow(), Stream = stream, Text = text };
@@ -399,6 +514,10 @@ public partial class TerraformJobProcessor(
   [LoggerMessage(Level = LogLevel.Information,
     Message = "Request {RequestId} waits for the requests it depends on")]
   private static partial void LogWaiting(ILogger logger, Guid requestId);
+
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "Request {RequestId} waits for the requests that depend on it to be destroyed")]
+  private static partial void LogWaitingForDependents(ILogger logger, Guid requestId);
 
   [LoggerMessage(Level = LogLevel.Information,
     Message = "Skipping the job for request {RequestId}: it changed before the runner got to it")]

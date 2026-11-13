@@ -90,6 +90,37 @@ public class TerraformRunnerTests : IClassFixture<ApiFactory>, IClassFixture<NoT
   }
 
   [Fact]
+  public async Task Runner_ResumesACascadingDestroy_AtStartup_DependentsFirst()
+  {
+    // A cascade the API stopped in the middle of: a project and a server in it, both Destroying, nothing queued.
+    var project = await _factory.SeedProjectAsync("owner-e", RequestStatus.Destroying);
+    var server = await _factory.SeedRequestAsync(
+      "owner-e",
+      RequestStatus.Destroying,
+      projectId: project.Id,
+      terraformVariables: RequestSeeding.ServerVariables);
+    await _factory.AddDependencyAsync(server.Id, project.ProjectRequestId);
+    _factory.TerraformState.Add(server.Id);
+
+    // The project's request is the older change, so recovery queues it first; it waits for the server.
+    using (var scope = _factory.Services.CreateScope())
+    {
+      await scope.ServiceProvider.GetRequiredService<AppDbContext>().ProvisioningRequests
+        .Where(x => x.Id == project.ProjectRequestId)
+        .ExecuteUpdateAsync(s => s.SetProperty(x => x.UpdatedAt, DateTimeOffset.UnixEpoch));
+    }
+
+    await using (await Start(new JobDispatcher()))
+    {
+      await WaitForDeleted(project.ProjectRequestId);
+    }
+
+    Assert.Null(await _factory.FindRequestAsync(server.Id));
+    Assert.Contains(_factory.Terraform.Invocations, i =>
+      i.Arguments[0] == "destroy" && Path.GetFileName(i.WorkingDirectory) == server.Id.ToString());
+  }
+
+  [Fact]
   public async Task Runner_FailsInterruptedApplies_AtStartup()
   {
     var request = await _factory.SeedRequestAsync("owner-c", RequestStatus.Applying);

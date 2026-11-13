@@ -104,9 +104,22 @@ public class RequestsController(
     Handle(() => requests.GetSensitiveOutputsAsync(id, Caller, cancellationToken));
 
   /// <summary>
-  /// Tears down what the request created: queues <c>terraform destroy</c> for the runner. Allowed from
-  /// <c>Succeeded</c> or <c>Failed</c>, by the owner or an admin; 409 from any other status. Follow it on
-  /// <c>GET .../logs</c>.
+  /// What destroying the request would do: what would be destroyed (it and everything that depends on it) in teardown
+  /// order, what would be cancelled, and what must finish first, or why the destroy would be refused. Owner or admin;
+  /// 404 otherwise.
+  /// </summary>
+  /// <param name="id">Request ID.</param>
+  /// <param name="cancellationToken">Cancels the request.</param>
+  /// <returns>The plan.</returns>
+  [HttpGet("{id:guid}/destroy-plan")]
+  public Task<ActionResult<DestroyPlanResponse>> DestroyPlan(Guid id, CancellationToken cancellationToken) =>
+    Handle(() => requests.GetDestroyPlanAsync(id, Caller, cancellationToken));
+
+  /// <summary>
+  /// Tears down what the request created, and everything that depends on it: cancels the proposals among them and
+  /// queues <c>terraform destroy</c> for the rest, which the runner runs dependents first. Allowed from
+  /// <c>Succeeded</c>, <c>Failed</c> or <c>DestroyFailed</c>, by the owner or an admin; 409 from any other status or
+  /// while something that depends on it is queued, applying or being destroyed. Follow it on <c>GET .../logs</c>.
   /// </summary>
   /// <param name="id">Request ID.</param>
   /// <param name="cancellationToken">Cancels the request.</param>

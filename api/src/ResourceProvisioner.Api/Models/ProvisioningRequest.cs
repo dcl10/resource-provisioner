@@ -39,6 +39,19 @@ public class ProvisioningRequest
   /// <summary>Where the request has got to. Also the concurrency token, so two transitions can't both win.</summary>
   public RequestStatus Status { get; set; }
 
+  /// <summary>
+  /// The status it had when it moved to <see cref="RequestStatus.Destroying"/> (<c>Succeeded</c>, <c>Failed</c> or
+  /// <c>DestroyFailed</c>), so it can go back to it if the destroy stops before Terraform has touched it: something that
+  /// depends on it failed to destroy. Null when it isn't being destroyed.
+  /// </summary>
+  public RequestStatus? StatusBeforeDestroy { get; set; }
+
+  /// <summary>
+  /// The request whose failed destroy stopped this one's: set when a destroy reverts it to
+  /// <see cref="StatusBeforeDestroy"/>, cleared when it's next destroyed. That request may since have gone.
+  /// </summary>
+  public Guid? DestroyStoppedById { get; set; }
+
   /// <summary>The non-sensitive Terraform outputs as a JSON object, once provisioned.</summary>
   public string? Outputs { get; set; }
 

@@ -91,6 +91,18 @@ public class ProjectService(AppDbContext db, IProvisioningRequestService request
     return await GetAsync(request.Project!.Id, user, cancellationToken);
   }
 
+  /// <inheritdoc />
+  public async Task<ProjectDetailResponse> DeleteAsync(
+    Guid id,
+    RequestUser user,
+    CancellationToken cancellationToken = default)
+  {
+    var row = await Visible(user).SingleOrDefaultAsync(x => x.Project.Id == id, cancellationToken) ??
+              throw new KeyNotFoundException($"Project {id} doesn't exist.");
+    await requests.DestroyAsync(row.Project.ProjectRequestId, user, cancellationToken);
+    return await GetAsync(id, user, cancellationToken);
+  }
+
   /// <summary>
   /// The projects the user may see, with their request's status and how many requests are in them. A project whose
   /// request was cancelled or destroyed was deleted with it.

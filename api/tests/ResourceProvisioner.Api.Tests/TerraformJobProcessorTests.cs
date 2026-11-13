@@ -304,7 +304,7 @@ public class TerraformJobProcessorTests : IClassFixture<ApiFactory>
   }
 
   [Fact]
-  public async Task RunAsync_FailsAndKeepsEverything_WhenDestroyFails()
+  public async Task RunAsync_MovesToDestroyFailedAndKeepsEverything_WhenDestroyFails()
   {
     var request = await SeedDestroying(withState: true);
     _factory.Terraform.Script("destroy", 1, (LogSource.Stderr, "Error: droplet is locked"));
@@ -312,7 +312,7 @@ public class TerraformJobProcessorTests : IClassFixture<ApiFactory>
     await Run(request.Id);
 
     var stored = await Find(request.Id);
-    Assert.Equal(RequestStatus.Failed, stored.Status);
+    Assert.Equal(RequestStatus.DestroyFailed, stored.Status);
     Assert.NotNull(stored.Outputs);
     Assert.NotNull(stored.SensitiveOutputs);
     Assert.DoesNotContain(request.Id, _factory.TerraformState.Deleted);
@@ -322,21 +322,120 @@ public class TerraformJobProcessorTests : IClassFixture<ApiFactory>
     Assert.Equal("Failed: terraform destroy exited with code 1.", lines[^1].Text);
   }
 
-  [Fact]
-  public async Task RunAsync_FailsAndKeepsEverything_WhenSomethingThatMayExistStillDependsOnIt()
+  [Theory]
+  [InlineData(RequestStatus.Destroying)]
+  [InlineData(RequestStatus.Queued)]
+  [InlineData(RequestStatus.Applying)]
+  public async Task RunAsync_WaitsWithoutRunningTerraform_WhileSomethingThatDependsOnItIsInTheRunnersHands(
+    RequestStatus dependentStatus)
   {
-    // Destroy refuses this; the delete checks again rather than orphan a live dependent.
     var request = await SeedDestroying(withState: true);
+    var dependent = await _factory.SeedRequestAsync(OwnerId, dependentStatus);
+    await _factory.AddDependencyAsync(dependent.Id, request.Id);
+
+    await Run(request.Id);
+
+    Assert.Equal(RequestStatus.Destroying, (await Find(request.Id)).Status);
+    Assert.Empty(_factory.Terraform.Invocations);
+    Assert.Empty(await Lines(request.Id));
+  }
+
+  [Fact]
+  public async Task RunAsync_WaitsForTheRequestsInTheProjectItBacks()
+  {
+    var project = await _factory.SeedProjectAsync(OwnerId, RequestStatus.Destroying);
+    await _factory.SeedRequestAsync(OwnerId, RequestStatus.Destroying, projectId: project.Id);
+
+    await Run(project.ProjectRequestId);
+
+    Assert.Equal(RequestStatus.Destroying, (await Find(project.ProjectRequestId)).Status);
+    Assert.Empty(_factory.Terraform.Invocations);
+  }
+
+  [Fact]
+  public async Task RunAsync_Destroys_WhenOnlyAProposalDependsOnIt()
+  {
+    var request = await SeedDestroying(withState: true);
+    var proposal = await _factory.SeedRequestAsync(OwnerId, RequestStatus.AwaitingConfirmation);
+    await _factory.AddDependencyAsync(proposal.Id, request.Id);
+
+    await Run(request.Id);
+
+    Assert.Null(await _factory.FindRequestAsync(request.Id));
+    Assert.NotNull(await _factory.FindRequestAsync(proposal.Id));
+  }
+
+  [Theory]
+  [InlineData(RequestStatus.Succeeded)]
+  [InlineData(RequestStatus.Failed)]
+  public async Task RunAsync_StopsAndGoesBackWithoutRunningTerraform_WhenSomethingThatMayExistStillDependsOnIt(
+    RequestStatus before)
+  {
+    // Not part of the cascade (it went back, or was never in it): the request is left exactly as it was.
+    var request = await _factory.SeedRequestAsync(
+      OwnerId,
+      RequestStatus.Destroying,
+      statusBeforeDestroy: before,
+      sensitiveOutputs: """{"root_password":"output-secret"}""");
+    _factory.TerraformState.Add(request.Id);
     var dependent = await _factory.SeedRequestAsync(OwnerId, RequestStatus.Succeeded);
     await _factory.AddDependencyAsync(dependent.Id, request.Id);
 
     await Run(request.Id);
 
     var stored = await Find(request.Id);
-    Assert.Equal(RequestStatus.Failed, stored.Status);
+    Assert.Equal((before, (RequestStatus?)null, (Guid?)dependent.Id),
+      (stored.Status, stored.StatusBeforeDestroy, stored.DestroyStoppedById));
     Assert.NotNull(stored.SensitiveOutputs);
+    Assert.Empty(_factory.Terraform.Invocations);
     Assert.DoesNotContain(request.Id, _factory.TerraformState.Deleted);
-    Assert.NotNull(await _factory.FindRequestAsync(dependent.Id));
+    Assert.Equal(
+      $"Destroy stopped: Test server \"web-1\" ({dependent.Id}), which depends on it, is Succeeded, so it isn't " +
+      "being destroyed.",
+      Assert.Single(await Lines(request.Id)).Text);
+  }
+
+  [Fact]
+  public async Task RunAsync_StopsTheRequestsWaitingOnIt_WhenItsDestroyFails()
+  {
+    // project <- server <- database, all being destroyed; the database's destroy fails.
+    var project = await _factory.SeedProjectAsync(OwnerId, RequestStatus.Destroying);
+    var server = await _factory.SeedRequestAsync(
+      OwnerId,
+      RequestStatus.Destroying,
+      projectId: project.Id,
+      statusBeforeDestroy: RequestStatus.Failed);
+    await _factory.AddDependencyAsync(server.Id, project.ProjectRequestId);
+    var database = await SeedDestroying(withState: true, projectId: project.Id);
+    await _factory.AddDependencyAsync(database.Id, server.Id);
+    await _factory.AddDependencyAsync(database.Id, project.ProjectRequestId);
+    _factory.Terraform.Script("destroy", 1, (LogSource.Stderr, "Error: droplet is locked"));
+
+    await Run(database.Id);
+
+    Assert.Equal(RequestStatus.DestroyFailed, (await Find(database.Id)).Status);
+    var stopped = $"Destroy stopped: Test server \"web-1\" ({database.Id}) failed to destroy.";
+    foreach (var (id, before) in new[]
+             {
+               (server.Id, RequestStatus.Failed), (project.ProjectRequestId, RequestStatus.Succeeded),
+             })
+    {
+      var stored = await Find(id);
+      Assert.Equal((before, (Guid?)database.Id), (stored.Status, stored.DestroyStoppedById));
+      Assert.Equal(stopped, Assert.Single(await Lines(id)).Text);
+    }
+  }
+
+  [Fact]
+  public async Task RunAsync_StopsOnlyTheRequestsItDependsOn_WhenItsDestroyFails()
+  {
+    var request = await SeedDestroying(withState: true);
+    var unrelated = await _factory.SeedRequestAsync(OwnerId, RequestStatus.Destroying);
+    _factory.Terraform.Script("destroy", 1);
+
+    await Run(request.Id);
+
+    Assert.Equal(RequestStatus.Destroying, (await Find(unrelated.Id)).Status);
   }
 
   [Fact]
@@ -347,7 +446,7 @@ public class TerraformJobProcessorTests : IClassFixture<ApiFactory>
     await Run(request.Id);
 
     var stored = await Find(request.Id);
-    Assert.Equal(RequestStatus.Failed, stored.Status);
+    Assert.Equal(RequestStatus.DestroyFailed, stored.Status);
     Assert.NotNull(stored.Outputs);
     Assert.Empty(_factory.Terraform.Invocations);
     Assert.Equal(
@@ -363,7 +462,7 @@ public class TerraformJobProcessorTests : IClassFixture<ApiFactory>
 
     await Run(request.Id);
 
-    Assert.Equal(RequestStatus.Failed, (await Find(request.Id)).Status);
+    Assert.Equal(RequestStatus.DestroyFailed, (await Find(request.Id)).Status);
     Assert.Empty(_factory.Terraform.Invocations);
     Assert.StartsWith(
       "Failed: The variables its apply used weren't saved",
@@ -411,7 +510,8 @@ public class TerraformJobProcessorTests : IClassFixture<ApiFactory>
   private async Task<ProvisioningRequest> SeedDestroying(
     bool withState,
     string type = "test-server",
-    string? terraformVariables = RequestSeeding.ServerVariables)
+    string? terraformVariables = RequestSeeding.ServerVariables,
+    Guid? projectId = null)
   {
     var request = await _factory.SeedRequestAsync(
       OwnerId,
@@ -419,7 +519,8 @@ public class TerraformJobProcessorTests : IClassFixture<ApiFactory>
       type,
       outputs: """{"id":"123"}""",
       sensitiveOutputs: """{"root_password":"output-secret"}""",
-      terraformVariables: terraformVariables);
+      terraformVariables: terraformVariables,
+      projectId: projectId);
     if (withState)
     {
       _factory.TerraformState.Add(request.Id);

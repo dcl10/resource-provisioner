@@ -5,7 +5,7 @@ using Models;
 using Requests;
 
 /// <summary>
-/// Projects: listing and reading them, and creating one from a form. A project's status is its <c>project</c>
+/// Projects: listing and reading them, creating one from a form, and deleting one with everything in it. A project's status is its <c>project</c>
 /// request's, and once that request is cancelled or destroyed the project is deleted with it. Ownership matches
 /// requests': users see their own projects, admins see everyone's, and anyone else's answers as missing.
 /// </summary>
@@ -44,4 +44,18 @@ public interface IProjectService
     RequestUser user,
     JsonObject variables,
     CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Deletes a project by destroying its <c>project</c> request, a cascading destroy
+  /// (<see cref="IProvisioningRequestService.DestroyAsync"/>): every request in it depends on that request, so they
+  /// are destroyed (or, for proposals, cancelled) first. The project is deleted with its request once that's
+  /// destroyed. The owner or an admin may do it.
+  /// </summary>
+  /// <param name="id">Project ID.</param>
+  /// <param name="user">The signed-in user: the owner, or an admin.</param>
+  /// <param name="cancellationToken">Cancels the call.</param>
+  /// <returns>The project, its request now Destroying.</returns>
+  /// <exception cref="KeyNotFoundException">No such project the user can see.</exception>
+  /// <exception cref="RequestConflictException">The destroy is refused, as for any request.</exception>
+  Task<ProjectDetailResponse> DeleteAsync(Guid id, RequestUser user, CancellationToken cancellationToken = default);
 }

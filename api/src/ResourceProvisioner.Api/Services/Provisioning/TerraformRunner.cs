@@ -7,8 +7,9 @@ using Requests;
 
 /// <summary>
 /// The Terraform runner: takes request IDs off the <see cref="IJobDispatcher"/> and runs them one at a time, each in
-/// its own scope. When it starts it fails requests a previous run left mid-apply and re-queues every <c>Queued</c> and
-/// <c>Destroying</c> one.
+/// its own scope. After each job it queues again the requests that were waiting for that one: queued requests that
+/// depend on it, and destroying requests it depended on. When it starts it fails requests a previous run left
+/// mid-apply and re-queues every <c>Queued</c> and <c>Destroying</c> one.
 /// </summary>
 /// <param name="queue">The job queue.</param>
 /// <param name="scopes">Creates a scope per job.</param>
@@ -37,8 +38,12 @@ public partial class TerraformRunner(
       try
       {
         using var scope = scopes.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        // Read first: a destroyed request is deleted with its dependencies.
+        var dependencyIds = await RequestGraph.DependencyIdsAsync(db, [requestId], stoppingToken);
         await scope.ServiceProvider.GetRequiredService<ITerraformJobProcessor>().RunAsync(requestId, stoppingToken);
-        await RequeueDependents(scope.ServiceProvider.GetRequiredService<AppDbContext>(), requestId, stoppingToken);
+        await RequeueWaiting(db, requestId, dependencyIds, stoppingToken);
       }
       catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
       {
@@ -53,17 +58,24 @@ public partial class TerraformRunner(
   }
 
   /// <summary>
-  /// Queues the queued requests that depend on one whose job just ended, so they run once it has succeeded, or fail
-  /// if it didn't. Duplicates in the queue are harmless.
+  /// Queues the requests waiting for one whose job just ended: the queued requests that depend on it, so they run once
+  /// it has succeeded, or fail if it didn't; and the destroying requests it depended on, so they're destroyed once it
+  /// has gone, or stop if it failed to. Duplicates in the queue are harmless.
   /// </summary>
-  private async Task RequeueDependents(AppDbContext db, Guid requestId, CancellationToken cancellationToken)
+  private async Task RequeueWaiting(
+    AppDbContext db,
+    Guid requestId,
+    List<Guid> dependencyIds,
+    CancellationToken cancellationToken)
   {
     var dependentIds = await db.RequestDependencies.AsNoTracking()
       .Where(d => d.DependsOnId == requestId)
       .Select(d => d.RequestId)
       .ToListAsync(cancellationToken);
     var waiting = await db.ProvisioningRequests.AsNoTracking()
-      .Where(x => dependentIds.Contains(x.Id) && x.Status == RequestStatus.Queued)
+      .Where(x => (dependentIds.Contains(x.Id) && x.Status == RequestStatus.Queued) ||
+                  (dependencyIds.Contains(x.Id) && x.Status == RequestStatus.Destroying))
+      .OrderBy(x => x.UpdatedAt)
       .Select(x => x.Id)
       .ToListAsync(cancellationToken);
     foreach (var id in waiting)
@@ -75,7 +87,8 @@ public partial class TerraformRunner(
   /// <summary>
   /// Fails requests left <c>Applying</c> (no job runs across a restart, and a half-done apply isn't retried), then
   /// re-queues the <c>Queued</c> and <c>Destroying</c> ones, oldest change first. A <c>Destroying</c> request may
-  /// have been waiting or half-done; either way running <c>terraform destroy</c> again is safe.
+  /// have been waiting or half-done; either way running <c>terraform destroy</c> again is safe, and one whose
+  /// dependents haven't gone yet just waits for them again, so a cascade carries on where it stopped.
   /// </summary>
   private async Task RecoverAsync(CancellationToken cancellationToken)
   {
