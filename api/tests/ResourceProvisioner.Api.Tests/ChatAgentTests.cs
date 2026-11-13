@@ -114,6 +114,86 @@ public class ChatAgentTests : IClassFixture<ApiFactory>
     Assert.Equal(_userId, request.OwnerId);
     Assert.Equal(id, request.ConversationId);
     Assert.Equal(project.Id, request.ProjectId);
+    Assert.Equal(project.Id.ToString(), proposal["project"]!["id"]!.GetValue<string>());
+    Assert.Equal(project.Name, proposal["project"]!["name"]!.GetValue<string>());
+  }
+
+  [Fact]
+  public async Task Send_ProposesAProjectAndAMember_InOneReply()
+  {
+    var id = await NewConversation();
+    _factory.ChatModel.ReplyToolUse(
+      AgentTools.ProposeRequest,
+      """{"type":"project","project_id":null,"variables":{"name":"shop"}}""");
+    _factory.ChatModel.ReplyWith(request =>
+    {
+      // What a model does: put the droplet in the project the first proposal returned, while it's still pending.
+      var result = ContentBlocks.OfType(request.Messages[^1].Content, "tool_result").Single();
+      var projectId = JsonNode.Parse(result["content"]!.GetValue<string>())!["proposal"]!["project"]!["id"]!;
+      var input = $$$"""{"type":"test-server","project_id":"{{{projectId}}}","variables":{"name":"web-1"}}""";
+      return [new ChatModelEvent.Completed(
+        new JsonArray(ContentBlocks.ToolUse("toolu_2", AgentTools.ProposeRequest, JsonNode.Parse(input)!.AsObject())),
+        "tool_use")];
+    });
+    _factory.ChatModel.ReplyText("Confirm them both.");
+
+    var events = await Send(id, "a project with a server in it");
+
+    var proposals = events.Where(e => e.Type == "proposal").Select(e => e.Data).ToList();
+    Assert.Equal(2, proposals.Count);
+    var (project, server) = (proposals[0], proposals[1]);
+    Assert.Equal("project", project["type"]!.GetValue<string>());
+    Assert.Equal("shop", project["project"]!["name"]!.GetValue<string>());
+    Assert.Equal(
+      project["project"]!["id"]!.GetValue<string>(),
+      server["project"]!["id"]!.GetValue<string>());
+    // The project's request is held as a dependency, so it's provisioned first.
+    var dependsOn = Assert.Single(server["dependsOn"]!.AsArray())!;
+    Assert.Equal(project["requestId"]!.GetValue<string>(), dependsOn["id"]!.GetValue<string>());
+    Assert.Equal("AwaitingConfirmation", dependsOn["status"]!.GetValue<string>());
+    var stored = await _factory.FindRequestAsync(Guid.Parse(server["requestId"]!.GetValue<string>()));
+    Assert.Equal(Guid.Parse(project["project"]!["id"]!.GetValue<string>()), stored!.ProjectId);
+  }
+
+  [Fact]
+  public async Task Send_RefusesAnotherUsersProject()
+  {
+    var id = await NewConversation();
+    var others = await _factory.SeedProjectAsync("someone-else");
+    _factory.ChatModel.ReplyToolUse(
+      AgentTools.ProposeRequest,
+      $$$"""{"type":"test-server","project_id":"{{{others.Id}}}","variables":{"name":"web-1"}}""");
+    _factory.ChatModel.ReplyText("That project isn't yours.");
+
+    var events = await Send(id, "a server in their project");
+
+    Assert.DoesNotContain(events, e => e.Type == "proposal");
+    var toolResult = LastToolResult();
+    Assert.True(toolResult["is_error"]!.GetValue<bool>());
+    var errors = JsonNode.Parse(toolResult["content"]!.GetValue<string>())!["errors"]!.AsObject();
+    Assert.Equal([AgentTools.ProjectId], errors.Select(e => e.Key));
+    using var scope = _factory.Services.CreateScope();
+    Assert.False(await scope.ServiceProvider.GetRequiredService<AppDbContext>().ProvisioningRequests
+      .AnyAsync(r => r.OwnerId == _userId));
+  }
+
+  [Theory]
+  [InlineData("null")]
+  [InlineData("\"not-an-id\"")]
+  public async Task Send_ReturnsAProjectError_WhenProjectIdIsMissingOrNotAnId(string projectId)
+  {
+    var id = await NewConversation();
+    _factory.ChatModel.ReplyToolUse(
+      AgentTools.ProposeRequest,
+      $$$"""{"type":"test-server","project_id":{{{projectId}}},"variables":{"name":"web-1"}}""");
+    _factory.ChatModel.ReplyText("Which project?");
+
+    var events = await Send(id, "a server");
+
+    Assert.DoesNotContain(events, e => e.Type == "proposal");
+    var toolResult = LastToolResult();
+    Assert.True(toolResult["is_error"]!.GetValue<bool>());
+    Assert.NotNull(JsonNode.Parse(toolResult["content"]!.GetValue<string>())!["errors"]![AgentTools.ProjectId]);
   }
 
   [Fact]
@@ -205,6 +285,38 @@ public class ChatAgentTests : IClassFixture<ApiFactory>
     Assert.DoesNotContain("output-secret", json);
     Assert.DoesNotContain(destroyed.Id.ToString(), json);
     Assert.DoesNotContain(others.Id.ToString(), json);
+  }
+
+  [Fact]
+  public async Task Send_ListsResourcesGroupedUnderTheirProjects()
+  {
+    var id = await NewConversation();
+    var shop = await _factory.SeedProjectAsync(_userId, RequestStatus.AwaitingConfirmation, name: "shop");
+    var blog = await _factory.SeedProjectAsync(_userId, name: "blog");
+    var inShop = await _factory.SeedRequestAsync(_userId, RequestStatus.AwaitingConfirmation, projectId: shop.Id);
+    var inBlog = await _factory.SeedRequestAsync(_userId, RequestStatus.Succeeded, projectId: blog.Id);
+    var legacy = await _factory.SeedRequestAsync(_userId, RequestStatus.Succeeded, withoutProject: true);
+    _factory.ChatModel.ReplyToolUse(AgentTools.ListMyResources);
+    _factory.ChatModel.ReplyText("ok");
+
+    await Send(id, "what do I have?");
+
+    var result = JsonNode.Parse(LastToolResult()["content"]!.GetValue<string>())!;
+    var projects = result["projects"]!.AsArray()
+      .ToDictionary(p => p!["name"]!.GetValue<string>(), p => p!.AsObject());
+    Assert.Equal(["blog", "shop"], projects.Keys.Order());
+    Assert.Equal(shop.Id.ToString(), projects["shop"]["projectId"]!.GetValue<string>());
+    Assert.Equal(shop.ProjectRequestId.ToString(), projects["shop"]["projectRequestId"]!.GetValue<string>());
+    Assert.Equal("AwaitingConfirmation", projects["shop"]["status"]!.GetValue<string>());
+    Assert.Equal(
+      [inShop.Id.ToString()],
+      projects["shop"]["resources"]!.AsArray().Select(r => r!["requestId"]!.GetValue<string>()));
+    Assert.Equal(
+      [inBlog.Id.ToString()],
+      projects["blog"]["resources"]!.AsArray().Select(r => r!["requestId"]!.GetValue<string>()));
+    Assert.Equal(
+      [legacy.Id.ToString()],
+      result["notInAProject"]!.AsArray().Select(r => r!["requestId"]!.GetValue<string>()));
   }
 
   [Fact]

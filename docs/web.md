@@ -111,7 +111,8 @@ back out of the thread and put back in the box, with a plain explanation of the 
 
 Assistant text is Markdown, rendered by `Markdown` with `remark-gfm` and `rehype-sanitize`; raw HTML is never rendered.
 
-`ProposalCard` shows the proposal's type, its variables (labels from the manifest), and its cost hint. It reads the
+`ProposalCard` shows the proposal's type, its variables (labels from the manifest), the **Project** it goes in (left
+out on a `project` request's own card, whose name is already in the table), and its cost hint. It reads the
 request's current status (`GET /api/requests/<id>`), so an old proposal shows where it got to. While it awaits
 confirmation, **Confirm** and **Cancel** call `POST /api/requests/<id>/confirm` or `/cancel`. Confirming shows a toast
 with a **View request** action and swaps the buttons for a link to the request page. Errors show on the card and in a

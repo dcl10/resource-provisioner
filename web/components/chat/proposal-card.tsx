@@ -37,6 +37,9 @@ import {
 /** The problem title the API gives when confirming would exceed an active-request limit. */
 const LIMIT_TITLE = "Active request limit reached";
 
+/** The catalog type whose requests back projects. */
+const PROJECT_TYPE = "project";
+
 /** A problem shown on the card, with an optional heading. */
 interface CardProblem {
   title?: string;
@@ -140,6 +143,13 @@ export function ProposalCard({ proposal }: { proposal: Proposal }) {
             ))}
           </TableBody>
         </Table>
+        {/* A project request's project is itself, already named in the table. */}
+        {proposal.project && proposal.type !== PROJECT_TYPE ? (
+          <p className="text-sm">
+            <span className="font-medium">Project: </span>
+            {proposal.project.name}
+          </p>
+        ) : null}
         {proposal.dependsOn?.length ? (
           <p className="text-sm">
             <span className="font-medium">Runs after: </span>

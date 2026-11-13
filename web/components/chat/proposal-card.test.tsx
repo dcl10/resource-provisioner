@@ -153,6 +153,39 @@ describe("ProposalCard", () => {
     );
   });
 
+  it("names the project it goes in", () => {
+    mockApi("AwaitingConfirmation");
+    render(
+      <Providers>
+        <ProposalCard
+          proposal={{ ...proposal, project: { id: "prj-1", name: "shop" } }}
+        />
+      </Providers>,
+    );
+
+    const line = screen.getByText("Project:").closest("p")!;
+    expect(line).toHaveTextContent("Project: shop");
+  });
+
+  it("doesn't name a project request's own project again", () => {
+    mockApi("AwaitingConfirmation");
+    render(
+      <Providers>
+        <ProposalCard
+          proposal={{
+            ...proposal,
+            type: "project",
+            displayName: "Project",
+            items: [{ name: "name", label: "Name", value: "shop" }],
+            project: { id: "prj-1", name: "shop" },
+          }}
+        />
+      </Providers>,
+    );
+
+    expect(screen.queryByText("Project:")).not.toBeInTheDocument();
+  });
+
   it("confirms the request, then shows a toast and a link to it", async () => {
     mockApi("AwaitingConfirmation");
     const user = userEvent.setup();

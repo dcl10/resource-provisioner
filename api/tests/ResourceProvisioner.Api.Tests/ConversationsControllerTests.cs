@@ -111,6 +111,7 @@ public class ConversationsControllerTests : IClassFixture<ApiFactory>, IClassFix
     var proposal = Assert.Single(reply.Proposals);
     Assert.Equal("test-server", proposal.Type);
     Assert.Contains(proposal.Items, i => i is { Name: "name", Value: "web-1" });
+    Assert.Equal(new ProjectLink(project.Id, project.Name), proposal.Project);
   }
 
   [Fact]

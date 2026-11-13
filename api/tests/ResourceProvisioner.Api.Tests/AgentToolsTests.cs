@@ -46,7 +46,8 @@ public class AgentToolsTests
       Walk(tool.InputSchema, schema =>
       {
         Assert.All(schema.Select(p => p.Key), key => Assert.Contains(key, StrictKeywords));
-        if (schema["type"]?.GetValue<string>() == "object")
+        // A nullable parameter's type is an array, such as ["string", "null"].
+        if (schema["type"] is JsonValue type && type.GetValue<string>() == "object")
         {
           Assert.False(schema["additionalProperties"]!.GetValue<bool>(), $"{tool.Name}: an object isn't closed");
         }
@@ -99,6 +100,19 @@ public class AgentToolsTests
     Assert.Equal(_fixtures.Types.Count, propose["properties"]!["variables"]!["anyOf"]!.AsArray().Count);
   }
 
+  [Fact]
+  public void ProposeRequest_RequiresANullableProjectId()
+  {
+    var propose = AgentTools.For(_fixtures).Single(t => t.Name == AgentTools.ProposeRequest).InputSchema;
+
+    Assert.Equal(
+      ["string", "null"],
+      propose["properties"]![AgentTools.ProjectId]!["type"]!.AsArray().Select(t => t!.GetValue<string>()));
+    Assert.Equal(
+      ["type", AgentTools.ProjectId, "variables"],
+      propose["required"]!.AsArray().Select(r => r!.GetValue<string>()));
+  }
+
   /// <summary>
   /// The real catalog's strict tools must fit strict tool use's limits, or every chat request fails with a 400.
   /// </summary>
@@ -106,8 +120,16 @@ public class AgentToolsTests
   public void RealCatalog_StaysWithinStrictToolLimits()
   {
     var root = CatalogLoader.ResolveRoot("catalog", AppContext.BaseDirectory);
+    var all = AgentTools.For(new CatalogService(CatalogLoader.Load(root)));
     // Only strict schemas count towards the limits.
-    var tools = AgentTools.For(new CatalogService(CatalogLoader.Load(root))).Where(t => t.Strict).ToList();
+    var tools = all.Where(t => t.Strict).ToList();
+
+    // propose_request's own parameters (project_id included) are all required, so they would add no optional
+    // parameters if it were ever sent strict.
+    var propose = all.Single(t => t.Name == AgentTools.ProposeRequest).InputSchema;
+    Assert.Equal(
+      propose["properties"]!.AsObject().Select(p => p.Key),
+      propose["required"]!.AsArray().Select(r => r!.GetValue<string>()));
 
     var optional = 0;
     var unions = 0;

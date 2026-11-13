@@ -27,7 +27,8 @@ public static class Proposals
       manifest.DisplayName,
       manifest.CostHint,
       items,
-      request.DependsOn);
+      request.DependsOn,
+      request.Project);
   }
 
   private static string Display(JsonNode? value) =>

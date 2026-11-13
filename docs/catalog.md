@@ -139,7 +139,7 @@ lowercase GUID, `maxItems` the provider's limit), and the module turns each ID i
   it's provisioned first, and can't be destroyed while the dependent may exist. See
   [architecture.md](architecture.md#dependencies).
 - The agent's tool schema says which type a reference takes, and that pending requests are fine; `list_my_resources`
-  returns the request ID and type of the user's own resources only, admins included (see [agent.md](agent.md#tools)).
+  returns the request ID and type of the user's own resources only, grouped by project, admins included (see [agent.md](agent.md#tools)).
 
 A free-form tag would let a user name another user's `rp-<requestId>` or the shared `resource-provisioner` tag. Request
 IDs are never reused, so a tag can't later match someone else's droplet.

@@ -44,6 +44,10 @@ stuck calling tools can't run up a bill.
 - Pick a type from `list_resource_types` only; if nothing fits, say so. Never invent a type.
 - Read the type's spec before discussing settings, and trust it over general DigitalOcean knowledge.
 - Ask only for what's missing or ambiguous, one or two questions at a time; use defaults and mention them.
+- Put everything but a project in one of the user's [projects](architecture.md#projects), as `propose_request`'s
+  `project_id`, found with `list_my_resources`: the only one, or ask which if there are several. With none, offer to
+  propose one first. A project proposed earlier in the same reply can be used at once, so "a project with a droplet
+  in it" is one reply.
 - Reference the user's existing droplets by request ID, via `list_my_resources`.
 - For resources that build on each other (a droplet and a firewall on it), propose them in one reply, the one needed
   first, referencing it by the `requestId` the first `propose_request` returned. The app provisions them in order, and
@@ -69,8 +73,25 @@ errors by field for it to fix.
 | --- | --- | --- |
 | `list_resource_types` | none | `[{type, displayName, description, costHint}]` for every type |
 | `get_resource_spec` | `type` (enum of the catalog's IDs) | The type's manifest without its sensitive variables: every variable's rules, `atLeastOneOf`, outputs |
-| `list_my_resources` | none | The user's own requests that aren't Cancelled or Destroyed: request ID, type, status, variables and non-sensitive outputs. Only the user's own, **admins included**: the agent acts for the user. |
-| `propose_request` | `type` (enum) and `variables` (`anyOf` the types' variable objects) | Calls `IProvisioningRequestService.ProposeAsync` as the user, recording the conversation ID. Invalid: `is_error` with `{"errors": {field path: [messages]}}`, for Claude to fix. Valid: `{"proposal": ..., "next": ...}`, and the browser gets a `proposal` event. A reference variable's description says which type it takes, and that pending requests (such as one proposed earlier in the reply) are fine. Every type but `project` needs a [project](architecture.md#projects): the executor passes a top-level `project_id` on if one is given, but the schema doesn't offer it yet (#56), so until then the agent can only propose projects. |
+| `list_my_resources` | none | The user's own requests that aren't Cancelled or Destroyed, grouped by project: `{"projects": [{projectId, name, status, projectRequestId, variables, outputs, createdAt, resources: [...]}], "notInAProject": [...]}`. Each resource has its request ID, type, status, variables and non-sensitive outputs; `notInAProject` holds requests from before projects. Only the user's own, **admins included**: the agent acts for the user. |
+| `propose_request` | `type` (enum), `project_id` (string or null, required) and `variables` (`anyOf` the types' variable objects) | Calls `IProvisioningRequestService.ProposeAsync` as the user, recording the conversation ID. Invalid: `is_error` with `{"errors": {field path: [messages]}}`, for Claude to fix. Valid: `{"proposal": ..., "next": ...}`, and the browser gets a `proposal` event. A reference variable's description says which type it takes, and that pending requests (such as one proposed earlier in the reply) are fine. |
+
+### `project_id`
+
+Every type but `project` belongs to one of the user's [projects](architecture.md#projects), so `propose_request` takes
+a top-level `project_id`. It's a tool parameter, not a manifest variable, so it isn't in any type's `variables`.
+
+- **Required but nullable** (`"type": ["string", "null"]`), not optional: strict mode allows only 24 optional
+  parameters across all strict tools, and a required one uses none of them. `propose_request` isn't strict today, but
+  `AgentToolsTests.RealCatalog_StaysWithinStrictToolLimits` checks its own parameters are all required, so it would
+  still fit if it were.
+- **Null only for a `project`**, which belongs to no project. Otherwise it must be one of the user's own projects,
+  admins included, that is pending or provisioned (not failed, cancelled, being destroyed or destroyed). Someone else's
+  project and a missing one get the same error, on `project_id`; so does a value that isn't a GUID.
+- **A project proposed in the same reply works.** Proposing a `project` returns its new project as `proposal.project`
+  and a `next` hint naming the ID to use, so "a project with a droplet in it" is two `propose_request` calls in one
+  reply. The member depends on the project's request, so it's provisioned first and can't be confirmed before it;
+  **Confirm all** handles both.
 
 A tool that throws returns a generic `is_error` result (details go to the API's log), so the loop carries on.
 
@@ -94,7 +115,8 @@ detail) but write only in their own, because the agent acts as the conversation'
 | `POST /api/conversations/{id}/messages` | 200, an event stream | 404 | 403 |
 
 `GET /api/conversations/{id}` returns the conversation as the chat page shows it: what the user typed, and each reply's
-text (the turns of one reply, split by tool calls, joined into one message) with the proposals made in it. Tool calls,
+text (the turns of one reply, split by tool calls, joined into one message) with the proposals made in it, read back
+from the stored tool results, so each has the same shape as its `proposal` event, `project` included. Tool calls,
 tool results and thinking are left out. The title is the start of the first message (80 characters).
 
 ### `POST /api/conversations/{id}/messages`
@@ -104,7 +126,7 @@ Body `{"text": "..."}` (1 to 4,000 characters; 400 otherwise). The response is s
 | Event | `data` | When |
 | --- | --- | --- |
 | `text` | `{"text": "..."}` | each piece of the reply, as Claude writes it (Markdown) |
-| `proposal` | `{"requestId", "type", "displayName", "costHint", "items": [{"name", "label", "value"}], "dependsOn": [{"id", "type", "displayName", "name", "status"}]}` | each request `propose_request` created, for the confirmation card; items follow the manifest's order and labels, without sensitive variables; `dependsOn` lists what it references |
+| `proposal` | `{"requestId", "type", "displayName", "costHint", "items": [{"name", "label", "value"}], "dependsOn": [{"id", "type", "displayName", "name", "status"}], "project": {"id", "name"}}` | each request `propose_request` created, for the confirmation card; items follow the manifest's order and labels, without sensitive variables; `dependsOn` lists what it references (its project's request included); `project` is the project it goes in, or for a `project` request the one it backs |
 | `done` | `{}` | the reply is complete; the stream closes |
 | `error` | `{"error": "..."}` | the reply stopped early, with a message for the user; the stream closes |
 
@@ -160,4 +182,5 @@ records every request, so `ChatAgentTests` exercise the whole loop through the r
 `AnthropicChatModelTests` check the SDK mapping against the exact request body the SDK would send (strict tools,
 fallback, effort, cache control, and stored blocks sent back unchanged), and the fallback echo rule. No test calls
 Anthropic. `AgentToolsTests.RealCatalog_StaysWithinStrictToolLimits` keeps the real catalog's tools within strict
-mode's limits.
+mode's limits. `ChatAgentTests` also cover projects in chat: a project and a member proposed in one reply, another
+user's project refused, and `list_my_resources` grouping by project.
