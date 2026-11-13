@@ -39,6 +39,7 @@ public class RequestsControllerTests(HighLimitApiFactory factory) : IClassFixtur
   [InlineData("POST", $"{Route}/00000000-0000-0000-0000-000000000001/confirm")]
   [InlineData("POST", $"{Route}/00000000-0000-0000-0000-000000000001/cancel")]
   [InlineData("POST", $"{Route}/00000000-0000-0000-0000-000000000001/destroy")]
+  [InlineData("GET", $"{Route}/00000000-0000-0000-0000-000000000001/destroy-plan")]
   [InlineData("GET", $"{Route}/00000000-0000-0000-0000-000000000001/sensitive-outputs")]
   public async Task Endpoints_ReturnUnauthorized_WithoutCredentials(string method, string url)
   {
@@ -257,6 +258,7 @@ public class RequestsControllerTests(HighLimitApiFactory factory) : IClassFixtur
   [Theory]
   [InlineData(RequestStatus.Succeeded)]
   [InlineData(RequestStatus.Failed)]
+  [InlineData(RequestStatus.DestroyFailed)]
   public async Task Destroy_QueuesDestroy_ForOwner(RequestStatus status)
   {
     var request = await factory.SeedRequestAsync(_userId, status);
@@ -275,7 +277,7 @@ public class RequestsControllerTests(HighLimitApiFactory factory) : IClassFixtur
   [InlineData(RequestStatus.Queued)]
   [InlineData(RequestStatus.Applying)]
   [InlineData(RequestStatus.Destroying)]
-  public async Task Destroy_ReturnsConflict_WhenNotSucceededOrFailed(RequestStatus status)
+  public async Task Destroy_ReturnsConflict_WhenNotSucceededFailedOrDestroyFailed(RequestStatus status)
   {
     var request = await factory.SeedRequestAsync(_userId, status);
 
