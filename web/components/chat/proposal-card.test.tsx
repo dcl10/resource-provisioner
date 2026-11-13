@@ -38,6 +38,7 @@ function request(status: RequestStatus): ProvisioningRequest {
     confirmedAt: null,
     dependsOn: [],
     dependents: [],
+    destroyStoppedBy: null,
   };
 }
 
