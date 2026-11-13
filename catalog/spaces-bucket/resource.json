@@ -21,14 +21,6 @@
       "description": "Datacenter: nyc3 (New York), sfo3 (San Francisco), ams3 (Amsterdam), lon1 (London), fra1 (Frankfurt) or sgp1 (Singapore). The price is the same in every region.",
       "allowedValues": ["nyc3", "sfo3", "ams3", "lon1", "fra1", "sgp1"],
       "default": "nyc3"
-    },
-    {
-      "name": "project_request_id",
-      "label": "Project",
-      "type": "string",
-      "references": "project",
-      "description": "Optional: the request ID of one of the user's projects to put this in. Without one, it goes in the account's default project.",
-      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
     }
   ],
   "outputs": [
