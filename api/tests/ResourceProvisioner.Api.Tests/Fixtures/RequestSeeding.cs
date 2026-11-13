@@ -29,6 +29,9 @@ public static class RequestSeeding
   /// <param name="terraformVariables">The tfvars its apply saved, if any.</param>
   /// <param name="projectId">The project it goes in; the owner's default project if null.</param>
   /// <param name="withoutProject">Put it in no project, like a request from before projects.</param>
+  /// <param name="statusBeforeDestroy">
+  /// The status it had before it moved to Destroying; for a Destroying request, <c>Succeeded</c> unless given.
+  /// </param>
   /// <returns>The saved request.</returns>
   public static async Task<ProvisioningRequest> SeedRequestAsync(
     this ApiFactory factory,
@@ -40,7 +43,8 @@ public static class RequestSeeding
     string? sensitiveOutputs = null,
     string? terraformVariables = null,
     Guid? projectId = null,
-    bool withoutProject = false)
+    bool withoutProject = false,
+    RequestStatus? statusBeforeDestroy = null)
   {
     if (type != Project.RequestType && !withoutProject)
     {
@@ -58,6 +62,9 @@ public static class RequestSeeding
       Status = status,
       Outputs = outputs,
       TerraformVariables = terraformVariables,
+      StatusBeforeDestroy = status == RequestStatus.Destroying
+        ? statusBeforeDestroy ?? RequestStatus.Succeeded
+        : statusBeforeDestroy,
       ProjectId = type == Project.RequestType ? null : projectId,
       CreatedAt = now,
       UpdatedAt = now,
