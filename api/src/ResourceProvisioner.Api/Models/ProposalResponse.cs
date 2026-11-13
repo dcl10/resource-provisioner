@@ -13,13 +13,18 @@ namespace ResourceProvisioner.Api.Models;
 /// The requests it references, provisioned before it, as they were when it was proposed. Null on proposals stored
 /// before dependencies existed.
 /// </param>
+/// <param name="Project">
+/// The project it goes in; for a <c>project</c> request, the project it backs. Null on proposals stored before
+/// projects existed.
+/// </param>
 public record ProposalResponse(
   Guid RequestId,
   string Type,
   string DisplayName,
   string CostHint,
   IReadOnlyList<ProposalItem> Items,
-  IReadOnlyList<RequestLink>? DependsOn = null);
+  IReadOnlyList<RequestLink>? DependsOn = null,
+  ProjectLink? Project = null);
 
 /// <summary>One variable on the confirmation card.</summary>
 /// <param name="Name">The variable name.</param>
