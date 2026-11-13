@@ -7,22 +7,23 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Npgsql;
 using Services.Agent;
 using Services.Keycloak;
 using Services.Provisioning;
 using Services.Terraform;
 
 /// <summary>
-/// Test host for integration tests. The database is a SQLite file in the temp folder, deleted with the fixture, so
-/// tests need neither Docker nor Postgres. A file rather than one shared in-memory connection, because the Terraform
-/// runner and the logs endpoint use the database from other threads while a test does; each DbContext gets its own
-/// connection, and SQLite's locking keeps them apart.
+/// Test host for integration tests. Each factory gets its own Postgres database, <c>rp_test_&lt;guid&gt;</c>, on the
+/// server named by <see cref="ServerConnectionVariable"/> (by default the <c>postgres-app</c> service in
+/// <c>docker-compose.yml</c>), built with the real migrations and dropped with the factory, so test classes stay
+/// isolated and can run in parallel. Each DbContext gets its own pooled connection, so the Terraform runner and the
+/// logs endpoint can use the database from other threads while a test does.
 /// </summary>
 public class ApiFactory : WebApplicationFactory<Program>
 {
@@ -32,7 +33,32 @@ public class ApiFactory : WebApplicationFactory<Program>
   /// </summary>
   public static readonly string FixtureCatalogRoot = Path.Combine(AppContext.BaseDirectory, "Fixtures", "catalog");
 
-  private readonly string _databasePath = Path.Combine(Path.GetTempPath(), $"rp-test-{Guid.NewGuid():N}.db");
+  /// <summary>
+  /// The environment variable holding an Npgsql connection string for the Postgres server tests create their
+  /// databases on. Its <c>Database</c> is the one connected to while creating and dropping them.
+  /// </summary>
+  public const string ServerConnectionVariable = "RP_TEST_POSTGRES";
+
+  /// <summary>The <c>postgres-app</c> service in <c>docker-compose.yml</c>, used when the variable isn't set.</summary>
+  public const string DefaultServerConnection =
+    "Host=localhost;Port=5432;Database=postgres;Username=rp;Password=dev_password";
+
+  private readonly string _serverConnection;
+  private readonly string _databaseName = $"rp_test_{Guid.NewGuid():N}";
+  private readonly Lock _databaseLock = new();
+  private bool _databaseCreated;
+
+  /// <summary>The connection string of this factory's own database.</summary>
+  public string ConnectionString { get; }
+
+  /// <summary>Creates a test host on a new database, created when the host first starts.</summary>
+  public ApiFactory()
+  {
+    var server = Environment.GetEnvironmentVariable(ServerConnectionVariable);
+    _serverConnection = string.IsNullOrWhiteSpace(server) ? DefaultServerConnection : server;
+    ConnectionString = new NpgsqlConnectionStringBuilder(_serverConnection) { Database = _databaseName }
+      .ConnectionString;
+  }
 
   /// <summary>The fake Keycloak admin API the app uses, shared by every request to this factory's host.</summary>
   public InMemoryKeycloakUserAdmin Keycloak { get; } = new();
@@ -95,7 +121,8 @@ public class ApiFactory : WebApplicationFactory<Program>
     {
       // AddDbContext registers more than DbContextOptions<AppDbContext>: EF Core also adds an
       // IDbContextOptionsConfiguration<AppDbContext> per call, so removing only the options would leave Npgsql
-      // registered alongside SQLite. Remove every descriptor generic over AppDbContext, plus the context itself.
+      // registered twice. Remove every descriptor generic over AppDbContext, plus the context itself, and register it again
+      // on this factory's database.
       var dbDescriptors = services
         .Where(d => d.ServiceType == typeof(AppDbContext) ||
                     (d.ServiceType.IsGenericType &&
@@ -107,17 +134,31 @@ public class ApiFactory : WebApplicationFactory<Program>
         services.Remove(descriptor);
       }
 
-      services.AddDbContext<AppDbContext>(o => o.UseSqlite($"Data Source={_databasePath}"));
+      services.AddDbContext<AppDbContext>(o => o.UseNpgsql(ConnectionString));
     });
   }
 
   /// <inheritdoc />
   protected override IHost CreateHost(IHostBuilder builder)
   {
+    // Hosts made with WithWebHostBuilder come through here too and share this factory's database, so it's created
+    // only once; migrating it again is a no-op.
+    lock (_databaseLock)
+    {
+      if (!_databaseCreated)
+      {
+        ExecuteOnServer($"CREATE DATABASE \"{_databaseName}\"");
+        _databaseCreated = true;
+      }
+    }
+
     var host = base.CreateHost(builder);
 
-    using var scope = host.Services.CreateScope();
-    scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.EnsureCreated();
+    lock (_databaseLock)
+    {
+      using var scope = host.Services.CreateScope();
+      scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.Migrate();
+    }
 
     return host;
   }
@@ -168,12 +209,30 @@ public class ApiFactory : WebApplicationFactory<Program>
     base.Dispose(disposing);
     if (disposing)
     {
-      SqliteConnection.ClearAllPools();
-      File.Delete(_databasePath);
+      if (_databaseCreated)
+      {
+        using (var connection = new NpgsqlConnection(ConnectionString))
+        {
+          NpgsqlConnection.ClearPool(connection);
+        }
+
+        // FORCE closes any connection still open, such as a log stream that outlived its test.
+        ExecuteOnServer($"DROP DATABASE IF EXISTS \"{_databaseName}\" WITH (FORCE)");
+        _databaseCreated = false;
+      }
+
       if (Directory.Exists(WorkspacesRoot))
       {
         Directory.Delete(WorkspacesRoot, recursive: true);
       }
     }
+  }
+
+  private void ExecuteOnServer(string sql)
+  {
+    using var connection = new NpgsqlConnection(_serverConnection);
+    connection.Open();
+    using var command = new NpgsqlCommand(sql, connection);
+    command.ExecuteNonQuery();
   }
 }
