@@ -2,7 +2,8 @@ namespace ResourceProvisioner.Api.Services.Provisioning;
 
 /// <summary>
 /// Where Terraform keeps each request's state: the app database, through Terraform's <c>pg</c> backend, one
-/// Terraform workspace per request. Behind an interface so tests, which run on SQLite, can fake it.
+/// Terraform workspace per request. Behind an interface so tests, whose fake Terraform CLI never writes state, can
+/// fake it.
 /// </summary>
 public interface ITerraformStateStore
 {

@@ -66,9 +66,8 @@ public class ConversationService(AppDbContext db, TimeProvider time) : IConversa
       query = query.Where(x => x.OwnerId == user.UserId);
     }
 
-    // SQLite (tests) can't order by DateTimeOffset, so sort in memory.
-    var conversations = await query.ToListAsync(cancellationToken);
-    return [.. conversations.OrderByDescending(x => x.UpdatedAt).Select(ToSummary)];
+    var conversations = await query.OrderByDescending(x => x.UpdatedAt).ToListAsync(cancellationToken);
+    return [.. conversations.Select(ToSummary)];
   }
 
   /// <inheritdoc />

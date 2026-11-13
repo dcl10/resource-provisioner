@@ -109,9 +109,8 @@ public class ProvisioningRequestService(
       query = query.Where(x => x.OwnerId == user.UserId);
     }
 
-    // SQLite (tests) can't order by DateTimeOffset, so sort in memory; active requests are capped, so lists are small.
-    var requests = await query.ToListAsync(cancellationToken);
-    return await ToResponses([.. requests.OrderByDescending(x => x.CreatedAt)], cancellationToken);
+    var requests = await query.OrderByDescending(x => x.CreatedAt).ToListAsync(cancellationToken);
+    return await ToResponses(requests, cancellationToken);
   }
 
   /// <inheritdoc />

@@ -3,7 +3,7 @@ namespace ResourceProvisioner.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Models;
 
-/// <summary>The app database: Postgres in production, SQLite in tests.</summary>
+/// <summary>The app database, on Postgres (in tests too).</summary>
 /// <param name="options">Provider and connection settings.</param>
 public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
 {

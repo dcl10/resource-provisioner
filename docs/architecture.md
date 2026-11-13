@@ -53,7 +53,8 @@ api/
 │                                # Terraform/ (ITerraformProcessRunner, the only thing that starts the CLI),
 │                                # Agent/ (the chat agent: IChatModel over Anthropic, tools, loop; see agent.md)
 └── tests/ResourceProvisioner.Api.Tests/
-    └── Fixtures/                # ApiFactory (WebApplicationFactory on a temp SQLite file, runner off), TestAuthHandler,
+    └── Fixtures/                # ApiFactory (WebApplicationFactory on its own migrated Postgres database, dropped
+                                 # with it; runner off), TestAuthHandler,
                                  # TestAdminController (test-only admin endpoint), InMemoryKeycloakUserAdmin,
                                  # FakeTerraform, FakeChatModel (scripted Claude), Sse (parses event streams),
                                  # TempCatalog, RequestSeeding (requests in any status),
@@ -65,9 +66,17 @@ Run it from `api/`:
 ```bash
 dotnet tool restore                                   # installs dotnet-ef
 dotnet run --project src/ResourceProvisioner.Api      # http://localhost:5000/health
+docker compose up -d postgres-app                     # the tests need Postgres
 dotnet test
 dotnet ef database update --project src/ResourceProvisioner.Api
 ```
+
+Integration tests run on Postgres, the production provider. Each `ApiFactory` creates its own database,
+`rp_test_<guid>`, builds it with the real migrations (`Database.Migrate()`) and drops it when disposed, so test
+classes stay isolated and run in parallel. The server comes from the `RP_TEST_POSTGRES` environment variable, an Npgsql
+connection string whose `Database` is the one connected to while creating and dropping test databases; it defaults to
+the compose `postgres-app` (`Host=localhost;Port=5432;Database=postgres;Username=rp;Password=dev_password`). CI runs a
+`postgres:16` service container for the `api` job.
 
 Migrations are **not** applied at startup; run `dotnet ef database update` after pulling a new migration. Add one
 with `dotnet ef migrations add <Name> --project src/ResourceProvisioner.Api -o Data/Migrations`.
