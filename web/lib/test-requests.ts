@@ -23,6 +23,7 @@ export function testRequest(
       ssh_public_key: "ssh-ed25519 AAAA",
     },
     outputs: status === "Succeeded" ? { ipv4_address: "192.0.2.1" } : null,
+    project: null,
     conversationId: null,
     createdAt: "2026-11-07T10:00:00Z",
     updatedAt: "2026-11-07T10:00:00Z",
