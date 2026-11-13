@@ -21,7 +21,10 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
   /// <summary>The Terraform runner's log lines, per request.</summary>
   public DbSet<JobLogLine> JobLogLines => Set<JobLogLine>();
 
-  /// <summary>Which requests depend on which, from their reference variables.</summary>
+  /// <summary>Users' projects, each backed by a <c>project</c> request.</summary>
+  public DbSet<Project> Projects => Set<Project>();
+
+  /// <summary>Which requests depend on which, from their reference variables and projects.</summary>
   public DbSet<RequestDependency> RequestDependencies => Set<RequestDependency>();
 
   /// <summary>Chats with the agent.</summary>
@@ -57,9 +60,32 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
       request.HasIndex(x => x.OwnerId);
       request.HasIndex(x => x.Status);
 
+      // Restrict: the requests in a project go before the project does.
+      request.HasOne<Project>()
+        .WithMany()
+        .HasForeignKey(x => x.ProjectId)
+        .OnDelete(DeleteBehavior.Restrict);
+
       request.HasOne(x => x.SensitiveOutputs)
         .WithOne()
         .HasForeignKey<RequestSensitiveOutputs>(x => x.RequestId)
+        .OnDelete(DeleteBehavior.Cascade);
+    });
+
+    modelBuilder.Entity<Project>(project =>
+    {
+      project.Property(x => x.OwnerId).HasMaxLength(64);
+      project.Property(x => x.OwnerEmail).HasMaxLength(254);
+      project.Property(x => x.Name).HasMaxLength(255);
+      project.Property(x => x.Purpose).HasMaxLength(255);
+      project.Property(x => x.Environment).HasMaxLength(64);
+      project.HasIndex(x => x.OwnerId);
+      project.HasIndex(x => x.ProjectRequestId).IsUnique();
+
+      // A project is its request's: deleting the request deletes the project.
+      project.HasOne<ProvisioningRequest>()
+        .WithOne()
+        .HasForeignKey<Project>(x => x.ProjectRequestId)
         .OnDelete(DeleteBehavior.Cascade);
     });
 
