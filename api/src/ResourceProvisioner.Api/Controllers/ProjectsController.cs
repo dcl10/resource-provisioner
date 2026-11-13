@@ -51,4 +51,18 @@ public class ProjectsController(IProjectService projects, ICurrentUser currentUs
       var project = await projects.CreateAsync(Caller, body.Variables, cancellationToken);
       return CreatedAtAction(nameof(Get), new { id = project.Id }, project);
     });
+
+  /// <summary>
+  /// Deletes a project: a cascading destroy of its <c>project</c> request, which everything in it depends on, so every
+  /// resource in it is destroyed first and every proposal in it cancelled. Once the runner has destroyed the project's
+  /// request, the project is gone. Owner or admin; 404 otherwise; 409 as for destroying a request. The plan is
+  /// <c>GET /api/requests/{projectRequestId}/destroy-plan</c>.
+  /// </summary>
+  /// <param name="id">Project ID.</param>
+  /// <param name="cancellationToken">Cancels the request.</param>
+  /// <returns>202 with the project, now Destroying.</returns>
+  [HttpDelete("{id:guid}")]
+  public Task<ActionResult<ProjectDetailResponse>> Delete(Guid id, CancellationToken cancellationToken) =>
+    HandleResult<ProjectDetailResponse>(async () =>
+      Accepted(await projects.DeleteAsync(id, Caller, cancellationToken)));
 }
