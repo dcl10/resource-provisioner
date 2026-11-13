@@ -94,9 +94,10 @@ public class ConversationsControllerTests : IClassFixture<ApiFactory>, IClassFix
   public async Task Get_ReturnsTheChatAsShown_WithProposalsAndWithoutToolInternals()
   {
     var id = await Create(User);
+    var project = await _factory.DefaultProjectAsync(_userId);
     _factory.ChatModel.ReplyToolUse(
       AgentTools.ProposeRequest,
-      """{"type":"test-server","variables":{"name":"web-1"}}""",
+      $$$"""{"type":"test-server","project_id":"{{{project.Id}}}","variables":{"name":"web-1"}}""",
       text: "Proposing it now.");
     _factory.ChatModel.ReplyText("Review the card and click Confirm.");
     await User.PostAsJsonAsync($"{Route}/{id}/messages", new { text = "a server called web-1" });

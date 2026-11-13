@@ -56,8 +56,9 @@ public class RequestsControllerTests(HighLimitApiFactory factory) : IClassFixtur
 
     var list = await User.GetFromJsonAsync<List<ProvisioningRequestResponse>>(Route);
 
+    // Seeding put them in the user's default project, whose own request is older still.
     Assert.NotNull(list);
-    Assert.Equal([newer.Id, older.Id], list.Select(r => r.Id));
+    Assert.Equal([newer.Id, older.Id], list.Where(r => r.Type != Project.RequestType).Select(r => r.Id));
     Assert.DoesNotContain(list, r => r.Id == others.Id);
   }
 
@@ -71,6 +72,62 @@ public class RequestsControllerTests(HighLimitApiFactory factory) : IClassFixtur
 
     Assert.Contains(list!, r => r.Id == mine.Id && r.OwnerId == _userId && r.OwnerEmail == $"{_userId}@example.com");
     Assert.Contains(list!, r => r.Id == others.Id && r.OwnerId == "someone-else");
+  }
+
+  [Fact]
+  public async Task List_FiltersByProject_ToItsRequestsAndTheOneBackingIt()
+  {
+    var shop = await factory.SeedProjectAsync(_userId, name: "shop");
+    var blog = await factory.SeedProjectAsync(_userId, name: "blog");
+    var inShop = await factory.SeedRequestAsync(_userId, RequestStatus.Succeeded, projectId: shop.Id);
+    await factory.SeedRequestAsync(_userId, RequestStatus.Succeeded, projectId: blog.Id);
+
+    var list = await User.GetFromJsonAsync<List<ProvisioningRequestResponse>>($"{Route}?projectId={shop.Id}");
+
+    Assert.Equal([inShop.Id, shop.ProjectRequestId], list!.Select(r => r.Id));
+    Assert.All(list!, r => Assert.Equal(new ProjectLink(shop.Id, "shop"), r.Project));
+  }
+
+  [Fact]
+  public async Task List_FiltersByProject_WithinWhatTheUserCanSee()
+  {
+    var others = await factory.SeedProjectAsync("someone-else");
+    await factory.SeedRequestAsync("someone-else", RequestStatus.Succeeded, projectId: others.Id);
+
+    var mine = await User.GetFromJsonAsync<List<ProvisioningRequestResponse>>($"{Route}?projectId={others.Id}");
+    var admins = await factory.CreateAdminClient()
+      .GetFromJsonAsync<List<ProvisioningRequestResponse>>($"{Route}?projectId={others.Id}");
+
+    Assert.Empty(mine!);
+    Assert.Equal(2, admins!.Count);
+  }
+
+  [Fact]
+  public async Task Get_CarriesTheProject_ItBelongsToOrBacks()
+  {
+    var project = await factory.SeedProjectAsync(_userId, name: "shop");
+    var server = await factory.SeedRequestAsync(_userId, RequestStatus.Succeeded, projectId: project.Id);
+
+    var member = JsonNode.Parse(await User.GetStringAsync($"{Route}/{server.Id}"))!;
+    var backing = JsonNode.Parse(await User.GetStringAsync($"{Route}/{project.ProjectRequestId}"))!;
+
+    Assert.Equal(project.Id.ToString(), member["project"]!["id"]!.GetValue<string>());
+    Assert.Equal("shop", member["project"]!["name"]!.GetValue<string>());
+    Assert.Equal(project.Id.ToString(), backing["project"]!["id"]!.GetValue<string>());
+  }
+
+  [Fact]
+  public async Task Confirm_Returns422_WhenTheProjectIsGone()
+  {
+    var project = await factory.SeedProjectAsync(_userId, RequestStatus.Destroyed, name: "shop");
+    var server = await factory.SeedRequestAsync(_userId, RequestStatus.AwaitingConfirmation, projectId: project.Id);
+
+    var response = await User.PostAsync($"{Route}/{server.Id}/confirm", null);
+
+    Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+    var problem = await response.Content.ReadFromJsonAsync<ValidationProblemDetails>();
+    Assert.Equal(["Project \"shop\" is Destroyed; only pending or provisioned projects can be used."],
+      problem!.Errors["project_id"]);
   }
 
   [Fact]

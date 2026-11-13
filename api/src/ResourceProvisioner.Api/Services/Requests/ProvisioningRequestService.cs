@@ -29,6 +29,9 @@ public class ProvisioningRequestService(
   /// <summary>The most requests one confirm-all can take.</summary>
   public const int MaxConfirmAtOnce = 20;
 
+  /// <summary>The field path a problem with the request's project is reported on.</summary>
+  public const string ProjectErrorKey = "project_id";
+
   /// <summary>
   /// Statuses a referenced request may be in: pending (it will be provisioned first) or provisioned. Failed,
   /// cancelled and destroyed requests, and ones being destroyed, can't be built on.
@@ -65,10 +68,11 @@ public class ProvisioningRequestService(
     RequestUser owner,
     string type,
     JsonObject? variables,
+    Guid? projectId,
     Guid? conversationId,
     CancellationToken cancellationToken = default)
   {
-    var (values, errors, dependsOn) = await ValidateAsync(owner.UserId, type, variables, cancellationToken);
+    var (values, errors, dependsOn) = await ValidateAsync(owner.UserId, type, variables, projectId, cancellationToken);
     if (errors.Count > 0)
     {
       return new ProposeResult(null, errors);
@@ -83,6 +87,7 @@ public class ProvisioningRequestService(
       Type = type,
       Variables = values.ToJsonString(),
       Status = RequestStatus.AwaitingConfirmation,
+      ProjectId = type == Project.RequestType ? null : projectId,
       ConversationId = conversationId,
       CreatedAt = now,
       UpdatedAt = now,
@@ -93,6 +98,24 @@ public class ProvisioningRequestService(
     {
       RequestId = request.Id, DependsOnId = id,
     }));
+
+    // A project request brings its project into being; the project's status is the request's from now on.
+    if (type == Project.RequestType)
+    {
+      db.Projects.Add(new Project
+      {
+        Id = Guid.NewGuid(),
+        OwnerId = owner.UserId,
+        OwnerEmail = owner.Email,
+        Name = StringValue(values, "name") ?? "",
+        Description = StringValue(values, "description"),
+        Purpose = StringValue(values, "purpose"),
+        Environment = StringValue(values, "environment"),
+        CreatedAt = now,
+        ProjectRequestId = request.Id,
+      });
+    }
+
     await db.SaveChangesAsync(cancellationToken);
 
     return new ProposeResult((await ToResponses([request], cancellationToken))[0], errors);
@@ -101,12 +124,20 @@ public class ProvisioningRequestService(
   /// <inheritdoc />
   public async Task<IReadOnlyList<ProvisioningRequestResponse>> ListAsync(
     RequestUser user,
+    Guid? projectId = null,
     CancellationToken cancellationToken = default)
   {
     var query = db.ProvisioningRequests.AsNoTracking();
     if (!user.IsAdmin)
     {
       query = query.Where(x => x.OwnerId == user.UserId);
+    }
+
+    // The requests in the project, and the one that backs it: those whose response's project is this one.
+    if (projectId is { } id)
+    {
+      query = query.Where(x =>
+        x.ProjectId == id || db.Projects.Any(p => p.Id == id && p.ProjectRequestId == x.Id));
     }
 
     var requests = await query.OrderByDescending(x => x.CreatedAt).ToListAsync(cancellationToken);
@@ -155,6 +186,7 @@ public class ProvisioningRequestService(
         request.OwnerId,
         request.Type,
         JsonNode.Parse(request.Variables)?.AsObject(),
+        request.ProjectId,
         cancellationToken);
       if (errors.Count > 0)
       {
@@ -259,13 +291,15 @@ public class ProvisioningRequestService(
   }
 
   /// <summary>
-  /// The manifest's checks, then the references in the values that passed them. Returns the values with defaults
-  /// applied, every error by field path, and the requests referenced.
+  /// The manifest's checks, the project, then the references in the values that passed them. Returns the values with
+  /// defaults applied, every error by field path, and the requests it depends on: its project's request first, then
+  /// those it references.
   /// </summary>
   private async Task<(JsonObject Values, Dictionary<string, string[]> Errors, List<Guid> DependsOn)> ValidateAsync(
     string ownerId,
     string type,
     JsonObject? variables,
+    Guid? projectId,
     CancellationToken cancellationToken)
   {
     var result = catalog.ValidateVariables(type, variables);
@@ -274,17 +308,66 @@ public class ProvisioningRequestService(
 
     if (catalog.Find(type) is { } manifest)
     {
+      var (projectError, projectRequestId) = await CheckProject(ownerId, type, projectId, cancellationToken);
+      if (projectError is not null)
+      {
+        errors[ProjectErrorKey] = [projectError];
+      }
+      else if (projectRequestId is { } id)
+      {
+        dependsOn.Add(id);
+      }
+
       var (problems, referenced) = await CheckReferences(manifest, result, ownerId, cancellationToken);
       foreach (var (path, message) in problems)
       {
         errors[path] = [.. errors.GetValueOrDefault(path, []), message];
       }
 
-      dependsOn.AddRange(referenced);
+      dependsOn.AddRange(referenced.Except(dependsOn).ToList());
     }
 
     return (result.Values, errors, dependsOn);
   }
+
+  /// <summary>
+  /// A <c>project</c> request belongs to no project; any other must belong to one of the owner's own projects, admins
+  /// included, whose request is pending or provisioned (<see cref="ReferenceableStatuses"/>), as references are
+  /// checked. Someone else's project and a missing one get the same message. Returns the error, or the project's
+  /// request, which the new request depends on.
+  /// </summary>
+  private async Task<(string? Error, Guid? ProjectRequestId)> CheckProject(
+    string ownerId,
+    string type,
+    Guid? projectId,
+    CancellationToken cancellationToken)
+  {
+    if (type == Project.RequestType)
+    {
+      return projectId is null ? (null, null) : ("A project can't belong to another project; leave it out.", null);
+    }
+
+    if (projectId is not { } id)
+    {
+      return ("Required: the ID of one of your projects to put this in.", null);
+    }
+
+    var project = await db.Projects.AsNoTracking()
+      .Where(p => p.Id == id && p.OwnerId == ownerId)
+      .Join(db.ProvisioningRequests, p => p.ProjectRequestId, r => r.Id, (p, r) => new { p.Name, r.Id, r.Status })
+      .SingleOrDefaultAsync(cancellationToken);
+    if (project is null)
+    {
+      return ($"'{id}' isn't the ID of one of your projects.", null);
+    }
+
+    return ReferenceableStatuses.Contains(project.Status)
+      ? (null, project.Id)
+      : ($"Project \"{project.Name}\" is {project.Status}; only pending or provisioned projects can be used.", null);
+  }
+
+  private static string? StringValue(JsonObject values, string name) =>
+    values[name] is JsonValue value && value.TryGetValue<string>(out var text) && text.Length > 0 ? text : null;
 
   /// <summary>
   /// Every request ID in a variable with <c>references</c> must be one of the owner's own requests of that type,
@@ -472,12 +555,25 @@ public class ProvisioningRequestService(
       : throw new RequestForbiddenException($"Only the request's owner can {action} it.");
   }
 
-  /// <summary>Responses for requests, with what each depends on and what depends on it.</summary>
+  /// <summary>
+  /// Responses for requests, with what each depends on and what depends on it, and its project (the one it belongs
+  /// to, or backs).
+  /// </summary>
   private async Task<List<ProvisioningRequestResponse>> ToResponses(
     IReadOnlyList<ProvisioningRequest> requests,
     CancellationToken cancellationToken)
   {
     var ids = requests.Select(r => r.Id).ToList();
+    var projectIds = requests.Where(r => r.ProjectId is not null).Select(r => r.ProjectId!.Value).Distinct().ToList();
+    var projects = await db.Projects.AsNoTracking()
+      .Where(p => projectIds.Contains(p.Id) || ids.Contains(p.ProjectRequestId))
+      .Select(p => new { p.Id, p.Name, p.ProjectRequestId })
+      .ToListAsync(cancellationToken);
+    ProjectLink? ProjectOf(ProvisioningRequest r) =>
+      projects.Where(p => r.ProjectId is { } id ? p.Id == id : p.ProjectRequestId == r.Id)
+        .Select(p => new ProjectLink(p.Id, p.Name))
+        .FirstOrDefault();
+
     var dependencies = await db.RequestDependencies.AsNoTracking()
       .Where(d => ids.Contains(d.RequestId) || ids.Contains(d.DependsOnId))
       .ToListAsync(cancellationToken);
@@ -492,12 +588,14 @@ public class ProvisioningRequestService(
 
     return [.. requests.Select(r => ToResponse(
       r,
+      ProjectOf(r),
       [.. dependencies.Where(d => d.RequestId == r.Id).Select(d => linked[d.DependsOnId])],
       [.. dependencies.Where(d => d.DependsOnId == r.Id).Select(d => linked[d.RequestId])]))];
   }
 
   private ProvisioningRequestResponse ToResponse(
     ProvisioningRequest x,
+    ProjectLink? project,
     IReadOnlyList<RequestLink> dependsOn,
     IReadOnlyList<RequestLink> dependents)
   {
@@ -519,6 +617,7 @@ public class ProvisioningRequestService(
       x.Status,
       variables,
       x.Outputs is null ? null : JsonNode.Parse(x.Outputs)?.AsObject(),
+      project,
       x.ConversationId,
       x.CreatedAt,
       x.UpdatedAt,

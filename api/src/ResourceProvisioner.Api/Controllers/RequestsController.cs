@@ -6,14 +6,13 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Auth;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Models;
 using Services.Requests;
 
 /// <summary>
 /// Provisioning requests. Users see and act on their own; admins see everyone's (with the owner shown) and can destroy
-/// any of them, but confirm or cancel only their own. Requests are created by the agent's <c>propose_request</c> tool,
-/// not here.
+/// any of them, but confirm or cancel only their own. Requests are created by the agent's <c>propose_request</c> tool
+/// (and projects' by <c>POST /api/projects</c>), not here.
 /// Errors come back as problem details: 404 for a request the user can't see, 403 for an admin acting on someone
 /// else's, 409 for the wrong status or a limit reached, 422 (with <c>errors</c> by field) when the variables are no
 /// longer valid at confirm.
@@ -26,18 +25,23 @@ using Services.Requests;
 public class RequestsController(
   IProvisioningRequestService requests,
   IRequestLogService logs,
-  ICurrentUser currentUser) : ControllerBase
+  ICurrentUser currentUser) : RequestErrorsControllerBase
 {
   private static readonly JsonSerializerOptions EventJson = new(JsonSerializerDefaults.Web);
 
   private RequestUser Caller => RequestUser.From(currentUser);
 
   /// <summary>Lists the user's requests, or every request for an admin, newest first.</summary>
+  /// <param name="projectId">
+  /// If set, only the requests in that project and the <c>project</c> request that backs it.
+  /// </param>
   /// <param name="cancellationToken">Cancels the request.</param>
   /// <returns>The requests.</returns>
   [HttpGet]
-  public Task<ActionResult<IReadOnlyList<ProvisioningRequestResponse>>> List(CancellationToken cancellationToken) =>
-    Handle(() => requests.ListAsync(Caller, cancellationToken));
+  public Task<ActionResult<IReadOnlyList<ProvisioningRequestResponse>>> List(
+    [FromQuery] Guid? projectId,
+    CancellationToken cancellationToken) =>
+    Handle(() => requests.ListAsync(Caller, projectId, cancellationToken));
 
   /// <summary>Reads one request.</summary>
   /// <param name="id">Request ID.</param>
@@ -149,45 +153,6 @@ public class RequestsController(
           JsonSerializer.Serialize(new { status = e.Status }, EventJson), "status"),
         _ => new SseItem<string>(JsonSerializer.Serialize(new { status = e.Status }, EventJson), "end"),
       };
-    }
-  }
-
-  /// <summary>Maps the service's exceptions to problem details.</summary>
-  private async Task<ActionResult<T>> Handle<T>(Func<Task<T>> action)
-  {
-    try
-    {
-      return await action();
-    }
-    catch (KeyNotFoundException ex)
-    {
-      return Problem(ex.Message, statusCode: StatusCodes.Status404NotFound);
-    }
-    catch (RequestForbiddenException ex)
-    {
-      return Problem(ex.Message, statusCode: StatusCodes.Status403Forbidden);
-    }
-    catch (RequestConflictException ex)
-    {
-      return Problem(ex.Message, statusCode: StatusCodes.Status409Conflict);
-    }
-    catch (RequestLimitException ex)
-    {
-      return Problem(ex.Message, statusCode: StatusCodes.Status409Conflict, title: "Active request limit reached");
-    }
-    catch (RequestValidationException ex)
-    {
-      var modelState = new ModelStateDictionary();
-      foreach (var (field, messages) in ex.Errors)
-      {
-        foreach (var message in messages)
-        {
-          modelState.AddModelError(field, message);
-        }
-      }
-
-      return ValidationProblem(ex.Message, statusCode: StatusCodes.Status422UnprocessableEntity,
-        modelStateDictionary: modelState);
     }
   }
 }

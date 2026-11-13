@@ -154,6 +154,53 @@ namespace ResourceProvisioner.Api.Data.Migrations
                     b.ToTable("JobLogLines");
                 });
 
+            modelBuilder.Entity("ResourceProvisioner.Api.Models.Project", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Environment")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("OwnerEmail")
+                        .HasMaxLength(254)
+                        .HasColumnType("character varying(254)");
+
+                    b.Property<string>("OwnerId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("ProjectRequestId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Purpose")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OwnerId");
+
+                    b.HasIndex("ProjectRequestId")
+                        .IsUnique();
+
+                    b.ToTable("Projects");
+                });
+
             modelBuilder.Entity("ResourceProvisioner.Api.Models.ProvisioningRequest", b =>
                 {
                     b.Property<Guid>("Id")
@@ -181,6 +228,9 @@ namespace ResourceProvisioner.Api.Data.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
+                    b.Property<Guid?>("ProjectId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Status")
                         .IsConcurrencyToken()
                         .IsRequired()
@@ -205,6 +255,8 @@ namespace ResourceProvisioner.Api.Data.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("OwnerId");
+
+                    b.HasIndex("ProjectId");
 
                     b.HasIndex("Status");
 
@@ -256,6 +308,23 @@ namespace ResourceProvisioner.Api.Data.Migrations
                         .HasForeignKey("RequestId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("ResourceProvisioner.Api.Models.Project", b =>
+                {
+                    b.HasOne("ResourceProvisioner.Api.Models.ProvisioningRequest", null)
+                        .WithOne()
+                        .HasForeignKey("ResourceProvisioner.Api.Models.Project", "ProjectRequestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("ResourceProvisioner.Api.Models.ProvisioningRequest", b =>
+                {
+                    b.HasOne("ResourceProvisioner.Api.Models.Project", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("ResourceProvisioner.Api.Models.RequestDependency", b =>

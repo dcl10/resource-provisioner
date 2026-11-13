@@ -71,7 +71,7 @@ public partial class AgentToolExecutor(
   private async Task<ToolOutcome> ListMine(RequestUser user, CancellationToken cancellationToken)
   {
     // Only the user's own requests, even for an admin: the agent acts for the user, not as an admin.
-    var own = await requests.ListAsync(user with { IsAdmin = false }, cancellationToken);
+    var own = await requests.ListAsync(user with { IsAdmin = false }, cancellationToken: cancellationToken);
     return Ok(own
       .Where(r => !Finished.Contains(r.Status))
       .Select(r => new
@@ -91,6 +91,9 @@ public partial class AgentToolExecutor(
       user,
       type,
       input["variables"]?.DeepClone() as JsonObject,
+      // propose_request's schema doesn't offer project_id yet (#56), so in practice the agent can only propose
+      // projects until it does; a project_id already given is passed on and checked like any other.
+      Guid.TryParse(Str(input, "project_id"), out var projectId) ? projectId : null,
       conversationId,
       cancellationToken);
 

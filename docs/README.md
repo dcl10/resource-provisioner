@@ -5,7 +5,7 @@ exist yet.
 
 | Doc | What it covers |
 | --- | --- |
-| [architecture.md](architecture.md) | Components, key design rules, request states, spend caps |
+| [architecture.md](architecture.md) | Components, key design rules, request states, ownership, dependencies, projects, spend caps |
 | [web.md](web.md) | Running the web app, its layout, using the session and the API proxy, the frontend stack and shadcn conventions |
 | [auth-setup.md](auth-setup.md) | Local services, the Keycloak realm and clients, client secrets, how the web app and API handle sign-in, bootstrapping the first admin, the invite flow |
 | [catalog.md](catalog.md) | The `resource.json` manifest format, what the loader checks, variable validation, adding a resource type, the current types |

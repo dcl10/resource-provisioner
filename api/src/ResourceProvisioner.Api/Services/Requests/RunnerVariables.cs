@@ -6,7 +6,8 @@ using ResourceCatalog;
 
 /// <summary>
 /// The Terraform variables the runner forces on every module, worked out from the request alone so neither the user
-/// nor the LLM can choose them: <c>rp_name_suffix</c> and <c>rp_tags</c> (see docs/catalog.md).
+/// nor the LLM can choose them: <c>rp_name_suffix</c> and <c>rp_tags</c>, and from what it depends on,
+/// <c>rp_project_id</c> and each reference's <c>rp_&lt;x&gt;_id</c> (see docs/catalog.md).
 /// </summary>
 public static class RunnerVariables
 {
@@ -60,6 +61,13 @@ public static class RunnerVariables
   /// <returns>The tag.</returns>
   public static string RequestTag(Guid requestId) => $"rp-{requestId:D}";
 
+  /// <summary>
+  /// The variable holding the DigitalOcean ID of the request's project (its <c>project</c> request's <c>id</c>
+  /// output). Passed to every module that declares it, so droplets, databases and buckets go in the project; a module
+  /// that can't be in a DigitalOcean project (a firewall) doesn't declare it.
+  /// </summary>
+  public const string ProjectIdVariable = "rp_project_id";
+
   /// <summary>The output of a referenced request that its dependency variable carries.</summary>
   public const string DependencyOutput = "id";
 
@@ -82,21 +90,35 @@ public static class RunnerVariables
 
   /// <summary>
   /// The dependency variables for a request: for each <see cref="DependencyVariable"/> it sets, the referenced
-  /// request's <see cref="DependencyOutput"/> output.
+  /// request's <see cref="DependencyOutput"/> output; and <see cref="ProjectIdVariable"/>, its project request's.
   /// </summary>
   /// <param name="manifest">The request's type.</param>
   /// <param name="variables">The request's variables.</param>
-  /// <param name="outputs">Referenced requests' non-sensitive outputs (JSON objects), by request ID.</param>
+  /// <param name="outputs">
+  /// The non-sensitive outputs (JSON objects) of the requests it depends on, by request ID, its project's included.
+  /// </param>
+  /// <param name="projectRequestId">
+  /// The <c>project</c> request backing the request's project, when its module declares
+  /// <see cref="ProjectIdVariable"/>; otherwise null, and the variable isn't set.
+  /// </param>
   /// <returns>The variables to add to the tfvars.</returns>
   /// <exception cref="InvalidOperationException">
-  /// A referenced request has no such output (it hasn't succeeded).
+  /// A referenced request, or the project request, has no such output (it hasn't succeeded).
   /// </exception>
   public static JsonObject ForDependencies(
     ResourceManifest manifest,
     JsonObject variables,
-    IReadOnlyDictionary<Guid, string?> outputs)
+    IReadOnlyDictionary<Guid, string?> outputs,
+    Guid? projectRequestId = null)
   {
     var result = new JsonObject();
+    if (projectRequestId is { } projectId)
+    {
+      result[ProjectIdVariable] = OutputOf(outputs, projectId) ??
+                                  throw new InvalidOperationException(
+                                    $"Project request {projectId} has no '{DependencyOutput}' output.");
+    }
+
     foreach (var variable in manifest.Variables)
     {
       if (DependencyVariable(variable) is not { } name ||
@@ -107,14 +129,16 @@ public static class RunnerVariables
         continue;
       }
 
-      var output = outputs.GetValueOrDefault(id) is { } json ? JsonNode.Parse(json)?[DependencyOutput] : null;
-      result[name] = output?.DeepClone() ??
+      result[name] = OutputOf(outputs, id) ??
                      throw new InvalidOperationException(
                        $"Request {id}, referenced by {variable.Name}, has no '{DependencyOutput}' output.");
     }
 
     return result;
   }
+
+  private static JsonNode? OutputOf(IReadOnlyDictionary<Guid, string?> outputs, Guid id) =>
+    outputs.GetValueOrDefault(id) is { } json ? JsonNode.Parse(json)?[DependencyOutput]?.DeepClone() : null;
 
   /// <summary>The runner's variables for a request, to merge over its own variables in the tfvars.</summary>
   /// <param name="request">The request.</param>

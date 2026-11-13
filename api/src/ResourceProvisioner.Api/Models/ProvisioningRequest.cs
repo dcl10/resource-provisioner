@@ -42,6 +42,13 @@ public class ProvisioningRequest
   /// <summary>The non-sensitive Terraform outputs as a JSON object, once provisioned.</summary>
   public string? Outputs { get; set; }
 
+  /// <summary>
+  /// The project it belongs to. Required for every type but <c>project</c> (the service enforces it, so a request
+  /// is checked when it's proposed and confirmed); null on a <c>project</c> request, which backs a project instead
+  /// (<see cref="Project.ProjectRequestId"/>).
+  /// </summary>
+  public Guid? ProjectId { get; set; }
+
   /// <summary>The chat conversation the agent proposed it in, if any.</summary>
   public Guid? ConversationId { get; set; }
 

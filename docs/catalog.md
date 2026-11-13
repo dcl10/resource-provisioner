@@ -112,11 +112,17 @@ creates; a request that sets `rp_tags` is rejected as an unknown field.
 - `rp_name_suffix` (`string`, default `""`): a short value from the request ID (up to 8 lowercase letters or digits).
   The resource's DigitalOcean name is `<name>-<rp_name_suffix>`, so names never clash in the shared account. Set the
   manifest's `name` `maxLength` to the resource's name limit minus 9 (for `-` and the suffix).
+- `rp_project_id` (`string`, default `""`), if the module declares it: the DigitalOcean ID of the request's
+  [project](architecture.md#projects), its `project` request's `id` output. Declare it in a module whose resources can
+  go in a DigitalOcean project (droplets, databases, buckets) and leave it out of one whose can't (firewalls). The
+  project has succeeded by the time this one runs, and the value stays in the saved tfvars for destroy. The loader
+  checks that the catalog then has a `project` type with an `id` output, and that no reference is named so as to set
+  it too (`project_request_id`).
 - `rp_<x>_id` (`string`, default `""`), for each single reference named `<x>_request_id` (a `string` with
-  `references`): the referenced request's `id` output, since a module can't read another request's state. For
-  example, `project_request_id` gives `rp_project_id`, the project's DigitalOcean ID; it's `""` when the reference
-  isn't set. The referenced request has succeeded by the time this one runs, and the value stays in the workspace's
-  tfvars for destroy. The loader checks the module declares it and the referenced type has an `id` output.
+  `references`): the referenced request's `id` output, since a module can't read another request's state; it's `""`
+  when the reference isn't set. The referenced request has succeeded by the time this one runs, and the value stays
+  in the saved tfvars for destroy. The loader checks the module declares it and the referenced type has an `id`
+  output. No current type uses one.
 
 **Provider credentials** never appear as variables. A module declares an empty `provider` block, and the runner passes
 the token in the environment (`DIGITALOCEAN_TOKEN` for the `digitalocean/digitalocean` provider).
@@ -189,6 +195,11 @@ invalid, listing every problem in every manifest. Hidden folders (`.terraform/`)
   is not a full HCL parser.
 - no `.tf` file declares a `backend`, and there's no `rp_backend.tf`: the runner adds that file to set the state
   backend itself ([provisioning.md](provisioning.md#workspaces-and-state))
+- a module that declares `rp_project_id` needs a `project` type with an `id` output in the catalog, and no reference
+  may set `rp_project_id` (see [Variables](#variables))
+
+The loader also records every variable each module declares, so the runner passes `rp_project_id` only to modules
+that take it.
 
 `dotnet test` also loads the real `catalog/` (`CatalogLoaderTests.Load_LoadsRepositoryCatalog_WithoutErrors`), so a
 bad manifest fails CI rather than a deploy.
@@ -198,8 +209,10 @@ bad manifest fails CI rather than a deploy.
 `Catalog:Root` (default `catalog`). An absolute path is used as-is. A relative path is looked for in the content root
 (the project folder under `dotnet run`) and then each folder above it, so the default finds the repo's `catalog/`
 wherever in the repo the API starts. The API image sets it to `/app/catalog`. Tests point it at the fixture catalog in
-`api/tests/ResourceProvisioner.Api.Tests/Fixtures/catalog/` (`test-server`, `test-firewall`, `test-database`), which
-covers every variable type, a droplet reference and an `atLeastOneOf` rule, and isn't a real module.
+`api/tests/ResourceProvisioner.Api.Tests/Fixtures/catalog/` (`project`, `test-server`, `test-firewall`,
+`test-database`, `test-group`), which covers every variable type, a droplet reference, a module that takes
+`rp_project_id` (`test-server`), a single reference that sets `rp_<x>_id` (`test-firewall`'s `group_request_id`) and
+an `atLeastOneOf` rule, and isn't a real module.
 
 ## Validating a request's variables
 
@@ -262,13 +275,14 @@ No API or agent code changes.
 | --- | --- |
 | `droplet` | A Linux VM: the three cheapest Basic sizes ($4, $6, $12 a month), six regions, Ubuntu 22.04/24.04/26.04 LTS or Debian 13. See [Droplet](#droplet). |
 | `firewall` | A free Cloud Firewall on up to five of the user's own droplets, named by their request IDs: typed inbound rules, outbound open to anywhere unless set. See [Cloud Firewall](#cloud-firewall). |
-| `project` | A free DigitalOcean project that groups the user's droplets, databases and buckets; those take its request ID as `project_request_id`. See [Project](#project). |
+| `project` | A free DigitalOcean project, the backing of an app [project](architecture.md#projects), which every other request belongs to. See [Project](#project). |
 | `postgres` | A single-node managed PostgreSQL cluster ($15 or $30 a month), six regions, PostgreSQL 16, 17 or 18, with an app database and non-admin user, reachable only from the user's own droplets and listed IPv4 addresses. See [Managed Postgres](#managed-postgres). |
 | `spaces-bucket` | A private Spaces (S3-compatible) bucket in one of six regions, with an access key limited to that bucket. Part of the account's $5 a month Spaces subscription. See [Spaces bucket](#spaces-bucket). |
 
-Droplets, Postgres clusters and Spaces buckets take an optional `project_request_id` (`"references": "project"`, a
-lowercase GUID) to go in one of the user's projects; without it they stay in the account's default project. Firewalls
-can't be in a project (a DigitalOcean limitation).
+Every request but a `project` belongs to one of the user's [projects](architecture.md#projects). That's chosen
+when the request is proposed, not by a manifest variable. Droplets, Postgres clusters and Spaces buckets declare
+`rp_project_id`, so they go in its DigitalOcean project; firewalls can't be in a DigitalOcean project (a DigitalOcean
+limitation), so they belong to the app project only.
 
 ### Droplet
 
@@ -394,10 +408,13 @@ and [`digitalocean_spaces_key`](https://registry.terraform.io/providers/digitalo
 - **What it is:** a `digitalocean_project` named `<name>-<rp_name_suffix>`, with an optional `description` (up to 255
   characters), a `purpose` from DigitalOcean's list (default `Web Application`) and an `environment` (`Development`,
   `Staging` or `Production`; default `Development`). `free: true`.
-- **Members:** droplets, Postgres clusters and Spaces buckets with `project_request_id` set. The runner gives them
-  `rp_project_id`; the droplet and bucket modules add a `digitalocean_project_resources`, and the Postgres cluster
-  sets its own `project_id`. The project can still be pending when a member is proposed: it's provisioned first
-  ([architecture.md](architecture.md#dependencies)).
+- **Backs an app project:** proposing a `project` request creates its `Project`, whose status is the request's
+  ([architecture.md](architecture.md#projects)). It can be proposed by the agent or created from the UI
+  (`POST /api/projects`).
+- **Members:** every request in the app project. Those whose module declares `rp_project_id` (droplets, Postgres
+  clusters, Spaces buckets) are put in the DigitalOcean project: the droplet and bucket modules add a
+  `digitalocean_project_resources`, and the Postgres cluster sets its own `project_id`. The project can still be
+  pending when a member is proposed: it's provisioned first ([architecture.md](architecture.md#dependencies)).
 - **Destroying:** refused while a member may still exist (DigitalOcean refuses to delete a non-empty project too).
   Destroying a member moves it back to the default project just before deleting it.
 - **`rp_tags` is declared but unused:** projects can't be tagged. Ownership is tracked by the request.

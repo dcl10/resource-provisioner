@@ -24,6 +24,10 @@ public class CatalogService(IReadOnlyList<CatalogEntry> entries) : ICatalogServi
       : throw new KeyNotFoundException($"Unknown resource type '{type}'.");
 
   /// <inheritdoc />
+  public bool ModuleDeclares(string type, string variable) =>
+    _byId.GetValueOrDefault(type)?.ModuleVariables?.Contains(variable) == true;
+
+  /// <inheritdoc />
   public VariableValidationResult ValidateVariables(string type, JsonObject? values)
   {
     var errors = new ValidationErrors();

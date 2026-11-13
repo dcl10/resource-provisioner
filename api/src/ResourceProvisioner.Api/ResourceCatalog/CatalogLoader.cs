@@ -89,7 +89,7 @@ public static class CatalogLoader
       }
       else
       {
-        entries.Add(new CatalogEntry(manifest!, folder));
+        entries.Add(new CatalogEntry(manifest!, folder, TerraformModuleChecker.ReadVariableNames(folder)));
       }
     }
 
@@ -106,6 +106,25 @@ public static class CatalogLoader
         problems.Add($"{Path.Combine(entry.ModuleDirectory, ManifestFileName)}:{Environment.NewLine}" +
                      $"  - {variable.Name}: the runner reads the '{RunnerVariables.DependencyOutput}' output of " +
                      $"'{variable.References}', which has none.");
+      }
+
+      // rp_project_id comes from the request's project, so no reference may set it too.
+      foreach (var variable in entry.Manifest.Variables.Where(v =>
+                 RunnerVariables.DependencyVariable(v) == RunnerVariables.ProjectIdVariable))
+      {
+        problems.Add($"{Path.Combine(entry.ModuleDirectory, ManifestFileName)}:{Environment.NewLine}" +
+                     $"  - {variable.Name}: the runner sets {RunnerVariables.ProjectIdVariable} from the request's " +
+                     "project, so a reference can't set it.");
+      }
+
+      if (entry.ModuleVariables?.Contains(RunnerVariables.ProjectIdVariable) == true &&
+          (!byId.TryGetValue(Models.Project.RequestType, out var project) ||
+           project.Outputs.All(o => o.Name != RunnerVariables.DependencyOutput)))
+      {
+        problems.Add($"{Path.Combine(entry.ModuleDirectory, ManifestFileName)}:{Environment.NewLine}" +
+                     $"  - variables.tf declares {RunnerVariables.ProjectIdVariable}, which the runner reads from " +
+                     $"the '{RunnerVariables.DependencyOutput}' output of the '{Models.Project.RequestType}' type, " +
+                     "but there's no such type or output.");
       }
 
       var unknown = entry.Manifest.Variables.Where(v => v.References is not null && !ids.Contains(v.References));

@@ -1,0 +1,39 @@
+{
+  "id": "project",
+  "displayName": "Project",
+  "description": "A fixture project type, free like the real one, whose requests back projects. Not a real module.",
+  "costHint": "Free.",
+  "free": true,
+  "variables": [
+    {
+      "name": "name",
+      "type": "string",
+      "description": "Project name.",
+      "required": true,
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    {
+      "name": "description",
+      "type": "string",
+      "description": "What it's for.",
+      "default": ""
+    },
+    {
+      "name": "purpose",
+      "type": "string",
+      "description": "What kind of work it's for.",
+      "allowedValues": ["Web Application", "Service or API"],
+      "default": "Web Application"
+    },
+    {
+      "name": "environment",
+      "type": "string",
+      "description": "Development, Staging or Production.",
+      "allowedValues": ["Development", "Staging", "Production"],
+      "default": "Development"
+    }
+  ],
+  "outputs": [
+    { "name": "id", "description": "Project ID." }
+  ]
+}

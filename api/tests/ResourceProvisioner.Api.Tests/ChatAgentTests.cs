@@ -94,9 +94,10 @@ public class ChatAgentTests : IClassFixture<ApiFactory>
   public async Task Send_ProposesRequest_AndEmitsProposal()
   {
     var id = await NewConversation();
+    var project = await _factory.DefaultProjectAsync(_userId);
     _factory.ChatModel.ReplyToolUse(
       AgentTools.ProposeRequest,
-      """{"type":"test-server","variables":{"name":"web-1","size":"medium"}}""");
+      $$$"""{"type":"test-server","project_id":"{{{project.Id}}}","variables":{"name":"web-1","size":"medium"}}""");
     _factory.ChatModel.ReplyText("Review the card and click Confirm.");
 
     var events = await Send(id, "a medium server called web-1");
@@ -112,15 +113,17 @@ public class ChatAgentTests : IClassFixture<ApiFactory>
     Assert.Equal(RequestStatus.AwaitingConfirmation, request!.Status);
     Assert.Equal(_userId, request.OwnerId);
     Assert.Equal(id, request.ConversationId);
+    Assert.Equal(project.Id, request.ProjectId);
   }
 
   [Fact]
   public async Task Send_ProposesASequence_ReferencingTheEarlierProposal()
   {
     var id = await NewConversation();
+    var project = await _factory.DefaultProjectAsync(_userId);
     _factory.ChatModel.ReplyToolUse(
       AgentTools.ProposeRequest,
-      """{"type":"test-server","variables":{"name":"web-1"}}""");
+      $$$"""{"type":"test-server","project_id":"{{{project.Id}}}","variables":{"name":"web-1"}}""");
     _factory.ChatModel.ReplyWith(request =>
     {
       // What a model does: read the requestId the first proposal returned, and reference it.
@@ -128,7 +131,8 @@ public class ChatAgentTests : IClassFixture<ApiFactory>
       var proposal = JsonNode.Parse(result["content"]!.GetValue<string>())!["proposal"]!;
       var serverId = proposal["requestId"]!.GetValue<string>();
       var input = $$$"""
-        {"type":"test-database","variables":{"name":"db","allowed_droplet_request_ids":["{{{serverId}}}"]}}
+        {"type":"test-database","project_id":"{{{project.Id}}}",
+         "variables":{"name":"db","allowed_droplet_request_ids":["{{{serverId}}}"]}}
         """;
       return [new ChatModelEvent.Completed(
         new JsonArray(ContentBlocks.ToolUse("toolu_2", AgentTools.ProposeRequest, JsonNode.Parse(input)!.AsObject())),
@@ -141,7 +145,7 @@ public class ChatAgentTests : IClassFixture<ApiFactory>
     var proposals = events.Where(e => e.Type == "proposal").Select(e => e.Data).ToList();
     Assert.Equal(2, proposals.Count);
     var serverId = proposals[0]["requestId"]!.GetValue<string>();
-    var dependsOn = proposals[1]["dependsOn"]!.AsArray().Single()!;
+    var dependsOn = proposals[1]["dependsOn"]!.AsArray().Single(d => d!["type"]!.GetValue<string>() != "project")!;
     Assert.Equal(serverId, dependsOn["id"]!.GetValue<string>());
     Assert.Equal("AwaitingConfirmation", dependsOn["status"]!.GetValue<string>());
   }

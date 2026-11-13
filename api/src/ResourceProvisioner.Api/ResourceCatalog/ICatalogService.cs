@@ -20,6 +20,15 @@ public interface ICatalogService
   string GetModuleDirectory(string type);
 
   /// <summary>
+  /// Whether a type's module declares a variable in <c>variables.tf</c>, such as a runner variable
+  /// (<c>rp_project_id</c>) that isn't in the manifest.
+  /// </summary>
+  /// <param name="type">The type's ID.</param>
+  /// <param name="variable">The Terraform variable's name.</param>
+  /// <returns>True if the type exists and its module declares it.</returns>
+  bool ModuleDeclares(string type, string variable);
+
+  /// <summary>
   /// Checks a request's variables against the type's manifest: types, required variables, allowed values, patterns,
   /// ranges and unknown names. Applies defaults, including those of nested object fields.
   /// </summary>

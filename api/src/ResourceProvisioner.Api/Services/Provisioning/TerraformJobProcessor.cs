@@ -79,7 +79,8 @@ public partial class TerraformJobProcessor(
 
   /// <summary>
   /// The runner variables a request takes from what it depends on (<see cref="RunnerVariables.ForDependencies"/>),
-  /// such as the project ID for <c>project_request_id</c>. Its dependencies have all succeeded by now.
+  /// such as <c>rp_project_id</c> from its project's request, if its module declares it. Its dependencies, its
+  /// project's request included, have all succeeded by now.
   /// </summary>
   private async Task<JsonObject> DependencyVariables(
     ProvisioningRequest request,
@@ -90,13 +91,30 @@ public partial class TerraformJobProcessor(
       .Where(d => d.RequestId == request.Id)
       .Select(d => d.DependsOnId)
       .ToListAsync(cancellationToken);
+
+    Guid? projectRequestId = null;
+    if (request.ProjectId is { } projectId &&
+        catalog.ModuleDeclares(request.Type, RunnerVariables.ProjectIdVariable))
+    {
+      projectRequestId = await db.Projects.AsNoTracking()
+                           .Where(p => p.Id == projectId)
+                           .Select(p => (Guid?)p.ProjectRequestId)
+                           .SingleOrDefaultAsync(cancellationToken) ??
+                         throw new JobFailedException($"Project {projectId}, which it belongs to, no longer exists.");
+      dependencyIds.Add(projectRequestId.Value);
+    }
+
     var outputs = await db.ProvisioningRequests.AsNoTracking()
       .Where(x => dependencyIds.Contains(x.Id))
       .ToDictionaryAsync(x => x.Id, x => x.Outputs, cancellationToken);
 
     try
     {
-      return RunnerVariables.ForDependencies(manifest, JsonNode.Parse(request.Variables)!.AsObject(), outputs);
+      return RunnerVariables.ForDependencies(
+        manifest,
+        JsonNode.Parse(request.Variables)!.AsObject(),
+        outputs,
+        projectRequestId);
     }
     catch (InvalidOperationException ex)
     {

@@ -14,11 +14,17 @@ public interface IProvisioningRequestService
   /// Validates a request and, if it's valid, creates it in <see cref="RequestStatus.AwaitingConfirmation"/>. Checks
   /// the variables against the type's manifest (including its <c>atLeastOneOf</c> rules), and that every ID in a
   /// variable with <c>references</c> is a request of that type <paramref name="owner"/> owns, pending or provisioned,
-  /// admins included. Those are recorded as its dependencies. Nothing is provisioned.
+  /// admins included. A <c>project</c> request takes no project and creates its <see cref="Project"/>; any other
+  /// type must name one of the owner's own projects, pending or provisioned, under the same rules. The project's
+  /// request and the referenced requests are recorded as its dependencies. Nothing is provisioned.
   /// </summary>
   /// <param name="owner">The user the request is for; becomes its owner.</param>
   /// <param name="type">The resource type's ID.</param>
   /// <param name="variables">The variables, by name.</param>
+  /// <param name="projectId">
+  /// The project it goes in: required, except for a <c>project</c> request, where it must be null. Problems are
+  /// reported on <c>project_id</c>.
+  /// </param>
   /// <param name="conversationId">The conversation it was proposed in, if any.</param>
   /// <param name="cancellationToken">Cancels the call.</param>
   /// <returns>The new request, or the errors to fix.</returns>
@@ -26,15 +32,20 @@ public interface IProvisioningRequestService
     RequestUser owner,
     string type,
     JsonObject? variables,
+    Guid? projectId,
     Guid? conversationId,
     CancellationToken cancellationToken = default);
 
   /// <summary>Lists the user's requests, or every request for an admin, newest first.</summary>
   /// <param name="user">The signed-in user.</param>
+  /// <param name="projectId">
+  /// If set, only the requests in that project and the <c>project</c> request that backs it.
+  /// </param>
   /// <param name="cancellationToken">Cancels the call.</param>
   /// <returns>The requests.</returns>
   Task<IReadOnlyList<ProvisioningRequestResponse>> ListAsync(
     RequestUser user,
+    Guid? projectId = null,
     CancellationToken cancellationToken = default);
 
   /// <summary>Reads one request: the user's own, or anyone's for an admin.</summary>
