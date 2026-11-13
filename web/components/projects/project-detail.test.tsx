@@ -125,6 +125,74 @@ describe("ProjectDetail", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("offers the owner Delete project once it's provisioned", async () => {
+    mockApi(() => jsonResponse(testProject("Succeeded")));
+    renderDetail();
+
+    expect(
+      await screen.findByRole("button", { name: "Delete project" }),
+    ).toBeInTheDocument();
+  });
+
+  it("offers an admin Delete project too", async () => {
+    mockApi(() => jsonResponse(testProject("Succeeded")));
+    renderDetail({ id: "admin-1", isAdmin: true });
+
+    expect(
+      await screen.findByRole("button", { name: "Delete project" }),
+    ).toBeInTheDocument();
+  });
+
+  it.each(["AwaitingConfirmation", "Applying", "Destroying"] as const)(
+    "offers no Delete project while it's %s",
+    async (status) => {
+      mockApi(() => jsonResponse(testProject(status)));
+      renderDetail();
+
+      await screen.findByRole("heading", { name: "shop" });
+      expect(
+        screen.queryByRole("button", { name: "Delete project" }),
+      ).not.toBeInTheDocument();
+    },
+  );
+
+  it("doesn't let another user delete it", async () => {
+    mockApi(() => jsonResponse(testProject("Succeeded")));
+    renderDetail({ id: "someone-else", isAdmin: false });
+
+    await screen.findByRole("heading", { name: "shop" });
+    expect(
+      screen.queryByRole("button", { name: "Delete project" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers a retry once the project's own destroy has failed", async () => {
+    mockApi(() => jsonResponse(testProject("DestroyFailed")));
+    renderDetail();
+
+    expect(
+      await screen.findByRole("button", { name: "Retry delete" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Destroy failed")).toBeInTheDocument();
+  });
+
+  it("says which resource's failed destroy stopped the delete", async () => {
+    const project = testProject("Succeeded");
+    project.request.destroyStoppedBy = { ...webLink, status: "DestroyFailed" };
+    mockApi(() => jsonResponse(project));
+    renderDetail();
+
+    expect(
+      await screen.findByText(/Deleting stopped because/),
+    ).toHaveTextContent(
+      "Deleting stopped because Droplet web-1 failed to destroy.",
+    );
+    expect(screen.getByRole("link", { name: "Droplet web-1" })).toHaveAttribute(
+      "href",
+      "/requests/req-web",
+    );
+  });
+
   it("explains a project that doesn't exist", async () => {
     mockApi(() =>
       jsonResponse({ detail: "Project prj-1 doesn't exist." }, 404),

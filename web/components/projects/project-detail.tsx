@@ -7,6 +7,7 @@ import { useEffect } from "react";
 import { toast } from "sonner";
 
 import { NewConversationButton } from "@/components/chat/conversation-list";
+import { DeleteProjectButton } from "@/components/projects/delete-project-button";
 import { useProject } from "@/components/projects/use-projects";
 import { StatusBadge } from "@/components/requests/status-badge";
 import {
@@ -21,7 +22,12 @@ import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { isNotFound } from "@/lib/api";
 import type { SessionUser } from "@/lib/auth/types";
 import { type ResourceNode, resourceTree } from "@/lib/projects";
-import { linkLabel, requestName, requestPath } from "@/lib/requests";
+import {
+  canDestroy,
+  linkLabel,
+  requestName,
+  requestPath,
+} from "@/lib/requests";
 
 const dateFormat = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -30,8 +36,10 @@ const dateFormat = new Intl.DateTimeFormat(undefined, {
 
 /**
  * One project: its status and settings, its resources (each nested under what it depends on, linking to its request
- * page), and a button to start a chat to add more. Re-reads itself while anything in it has a job queued or running.
- * Once the project is gone (its `project` request destroyed or cancelled), it says so and goes to the projects list.
+ * page), a button to start a chat to add more, and **Delete project** for the owner or an admin. Re-reads itself while
+ * anything in it has a job queued or running. If deleting it stopped because something in it failed to destroy, it
+ * says which. Once the project is gone (its `project` request destroyed or cancelled), it says so and goes to the
+ * projects list.
  * @param projectId - the project
  * @param user - the signed-in user, to tell their own project from someone else's
  * @returns the page content
@@ -78,7 +86,9 @@ export function ProjectDetail({
 
   const data = project.data;
   const isOwner = data.ownerId === user.id;
+  const canDelete = canDestroy(data.status) && (isOwner || user.isAdmin);
   const tree = resourceTree(data.resources);
+  const stoppedBy = data.request.destroyStoppedBy;
 
   return (
     <div className="flex flex-col gap-6">
@@ -95,9 +105,12 @@ export function ProjectDetail({
             {data.name}
           </h1>
           <StatusBadge status={data.status} />
-          {isOwner ? (
+          {isOwner || canDelete ? (
             <div className="ml-auto flex flex-wrap items-center gap-2">
-              <NewConversationButton variant="outline" label="Start a chat" />
+              {isOwner ? (
+                <NewConversationButton variant="outline" label="Start a chat" />
+              ) : null}
+              {canDelete ? <DeleteProjectButton project={data} /> : null}
             </div>
           ) : null}
         </div>
@@ -105,6 +118,33 @@ export function ProjectDetail({
           Created {dateFormat.format(new Date(data.createdAt))}
           {isOwner ? "" : ` · Owner: ${data.ownerEmail ?? data.ownerId}`}
         </p>
+        {data.status === "DestroyFailed" ? (
+          <p className="text-sm" aria-live="polite">
+            Deleting the project failed while destroying the project itself, so
+            it may still exist in DigitalOcean.{" "}
+            <Link
+              href={requestPath(data.projectRequestId)}
+              className="underline underline-offset-4"
+            >
+              Its log
+            </Link>{" "}
+            says why.
+          </p>
+        ) : null}
+        {stoppedBy ? (
+          <p className="text-sm" aria-live="polite">
+            Deleting stopped because{" "}
+            <Link
+              href={requestPath(stoppedBy.id)}
+              className="underline underline-offset-4"
+            >
+              {linkLabel(stoppedBy)}
+            </Link>{" "}
+            failed to destroy. Delete the project again to retry everything, or
+            retry that alone from its page, which destroys only it and what
+            depends on it.
+          </p>
+        ) : null}
       </div>
 
       <Card>

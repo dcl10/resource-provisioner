@@ -1,4 +1,4 @@
-import { LoaderCircle } from "lucide-react";
+import { LoaderCircle, TriangleAlert } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { isInProgress, type RequestStatus, statusLabels } from "@/lib/requests";
@@ -13,10 +13,12 @@ const variants: Record<
   Succeeded: "default",
   Failed: "destructive",
   Destroying: "secondary",
+  DestroyFailed: "destructive",
 };
 
 /**
  * A request's status as a badge: a short label, coloured by outcome, with a spinner while a job is queued or running.
+ * A failed destroy also has a warning icon, to tell it from a failed apply: its resources may still exist.
  * @param status - the status
  * @returns the badge
  */
@@ -26,6 +28,7 @@ export function StatusBadge({ status }: { status: RequestStatus }) {
       {isInProgress(status) ? (
         <LoaderCircle className="animate-spin" aria-hidden />
       ) : null}
+      {status === "DestroyFailed" ? <TriangleAlert aria-hidden /> : null}
       {statusLabels[status]}
     </Badge>
   );

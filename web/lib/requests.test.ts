@@ -5,6 +5,7 @@ import {
   canDestroy,
   followLogs,
   formatValue,
+  getDestroyPlan,
 } from "@/lib/requests";
 import { sseEvent, sseResponse } from "@/lib/test-sse";
 
@@ -103,12 +104,37 @@ describe("canDestroy", () => {
   it.each([
     ["Succeeded", true],
     ["Failed", true],
+    ["DestroyFailed", true],
     ["AwaitingConfirmation", false],
     ["Queued", false],
     ["Applying", false],
     ["Destroying", false],
   ] as const)("is %s for %s", (status, expected) => {
     expect(canDestroy(status)).toBe(expected);
+  });
+});
+
+describe("getDestroyPlan", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("reads the request's destroy plan", async () => {
+    const plan = {
+      canDestroy: true,
+      reason: null,
+      destroy: [],
+      cancel: [],
+      waitFor: [],
+    };
+    const fetchMock = vi.fn(async () => Response.json(plan));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getDestroyPlan("req-1")).resolves.toEqual(plan);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/proxy/requests/req-1/destroy-plan",
+      expect.anything(),
+    );
   });
 });
 

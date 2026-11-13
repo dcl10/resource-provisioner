@@ -30,7 +30,6 @@ import { isNotFound } from "@/lib/api";
 import type { SessionUser } from "@/lib/auth/types";
 import { PROJECT_TYPE, projectPath } from "@/lib/projects";
 import {
-  blockingDependents,
   canDestroy,
   formatValue,
   isInProgress,
@@ -64,7 +63,8 @@ function afterDeleted(request: ProvisioningRequest): {
 
 /**
  * One request: its status, settings, outputs (secret ones behind a reveal, for the owner), the live Terraform log,
- * and Destroy for the owner or an admin once it's provisioned or has failed, with a link to its project. Once a
+ * and Destroy for the owner or an admin once it's provisioned or has failed (Retry destroy after a failed destroy),
+ * with a link to its project. If its destroy stopped because something that depends on it failed to, it says which. Once a
  * destroy finishes the API deletes the request, so the page then answers 404 and sends the user to its project (or,
  * for a project's own request or one without a project, to the projects or requests list).
  * @param requestId - the request
@@ -130,7 +130,6 @@ export function RequestDetail({
   const secretSpecs = outputSpecs.filter((o) => o.sensitive);
   const outputs = Object.entries(data.outputs ?? {});
   const waiting = waitingFor(data);
-  const blocking = blockingDependents(data);
 
   return (
     <div className="flex flex-col gap-6">
@@ -150,9 +149,7 @@ export function RequestDetail({
             ) : null}
           </h1>
           <StatusBadge status={data.status} />
-          {canDestroy(data.status) &&
-          (isOwner || user.isAdmin) &&
-          blocking.length === 0 ? (
+          {canDestroy(data.status) && (isOwner || user.isAdmin) ? (
             <div className="ml-auto">
               <DestroyButton request={data} />
             </div>
@@ -181,12 +178,17 @@ export function RequestDetail({
             Waiting for <Links links={waiting} /> to be provisioned first.
           </p>
         ) : null}
-        {canDestroy(data.status) &&
-        (isOwner || user.isAdmin) &&
-        blocking.length > 0 ? (
-          <p className="text-sm text-muted-foreground">
-            To destroy this, first destroy <Links links={blocking} />, which{" "}
-            {blocking.length === 1 ? "depends" : "depend"} on it.
+        {data.status === "DestroyFailed" ? (
+          <p className="text-sm" aria-live="polite">
+            Its destroy failed, so what it created may still exist. The log
+            below says why. A retry destroys only this and what depends on it.
+          </p>
+        ) : null}
+        {data.destroyStoppedBy ? (
+          <p className="text-sm" aria-live="polite">
+            Destroy stopped because <Links links={[data.destroyStoppedBy]} />{" "}
+            failed to destroy. Destroy this again to retry, or retry that one
+            alone from its page.
           </p>
         ) : null}
       </div>
@@ -196,8 +198,8 @@ export function RequestDetail({
           <CardHeader>
             <CardTitle>Related requests</CardTitle>
             <CardDescription>
-              What this needs is provisioned before it; what needs it is
-              destroyed before it.
+              What this needs is provisioned before it. Destroying it destroys
+              what needs it first.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">

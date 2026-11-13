@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { retryUnlessClientError } from "@/lib/api";
 import { listResourceTypes } from "@/lib/catalog";
 import {
+  getDestroyPlan,
   getRequest,
   isInProgress,
   listRequests,
@@ -56,6 +57,36 @@ export function useRequest(id: string) {
     retry: retryUnlessClientError,
     refetchInterval: (query) =>
       query.state.data && isInProgress(query.state.data.status)
+        ? POLL_INTERVAL_MS
+        : false,
+  });
+}
+
+/**
+ * TanStack Query key for what destroying a request would do. Starts with {@link requestQueryKey}, so refreshing the
+ * request refreshes it too.
+ * @param id - the request ID
+ * @returns the key
+ */
+export function destroyPlanQueryKey(id: string) {
+  return ["requests", id, "destroy-plan"] as const;
+}
+
+/**
+ * What destroying a request would do, read afresh whenever something shows it (a destroy dialog opening) and dropped
+ * once nothing does. While something that depends on the request is still running, it's re-read every few seconds,
+ * so the destroy is offered as soon as that has finished.
+ * @param id - the request ID
+ * @returns the query
+ */
+export function useDestroyPlan(id: string) {
+  return useQuery({
+    queryKey: destroyPlanQueryKey(id),
+    queryFn: () => getDestroyPlan(id),
+    retry: retryUnlessClientError,
+    gcTime: 0,
+    refetchInterval: (query) =>
+      query.state.data && query.state.data.waitFor.length > 0
         ? POLL_INTERVAL_MS
         : false,
   });

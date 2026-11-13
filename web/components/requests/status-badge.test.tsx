@@ -12,6 +12,7 @@ describe("StatusBadge", () => {
     ["Succeeded", "Provisioned"],
     ["Failed", "Failed"],
     ["Destroying", "Destroying"],
+    ["DestroyFailed", "Destroy failed"],
   ])("labels %s as %s", (status, label) => {
     render(<StatusBadge status={status} />);
 
@@ -27,18 +28,32 @@ describe("StatusBadge", () => {
     },
   );
 
-  it.each<RequestStatus>(["AwaitingConfirmation", "Succeeded", "Failed"])(
-    "shows no spinner once %s",
-    (status) => {
-      const { container } = render(<StatusBadge status={status} />);
+  it.each<RequestStatus>([
+    "AwaitingConfirmation",
+    "Succeeded",
+    "Failed",
+    "DestroyFailed",
+  ])("shows no spinner once %s", (status) => {
+    const { container } = render(<StatusBadge status={status} />);
 
-      expect(container.querySelector(".animate-spin")).toBeNull();
-    },
-  );
+    expect(container.querySelector(".animate-spin")).toBeNull();
+  });
 
   it("marks a failure as destructive", () => {
     render(<StatusBadge status="Failed" />);
 
     expect(screen.getByText("Failed")).toHaveClass("bg-destructive/10");
+  });
+
+  it("marks a failed destroy as destructive, with a warning icon a failed apply doesn't have", () => {
+    const { container, rerender } = render(
+      <StatusBadge status="DestroyFailed" />,
+    );
+
+    expect(screen.getByText("Destroy failed")).toHaveClass("bg-destructive/10");
+    expect(container.querySelector("svg")).not.toBeNull();
+
+    rerender(<StatusBadge status="Failed" />);
+    expect(container.querySelector("svg")).toBeNull();
   });
 });
