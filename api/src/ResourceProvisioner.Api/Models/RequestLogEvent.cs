@@ -3,7 +3,7 @@ namespace ResourceProvisioner.Api.Models;
 /// <summary>
 /// One event on <c>GET /api/requests/{id}/logs</c>: a log line, the request's status, or the end of the stream.
 /// </summary>
-/// <param name="Kind">Which of the three it is; also the SSE event type.</param>
+/// <param name="Kind">Which it is; also the SSE event type.</param>
 /// <param name="Id">The log line's ID, for <c>Last-Event-ID</c>; null for status and end events.</param>
 /// <param name="Line">The log line, for a <see cref="RequestLogEventKind.Log"/> event.</param>
 /// <param name="Status">The request's status, for status and end events.</param>
@@ -20,6 +20,12 @@ public enum RequestLogEventKind
 
   /// <summary>Nothing more is coming: no job is queued or running for the request (SSE event <c>end</c>).</summary>
   End,
+
+  /// <summary>
+  /// Nothing more is coming: the request was deleted while the stream was open, because it was destroyed (SSE event
+  /// <c>deleted</c>, with no status).
+  /// </summary>
+  Deleted,
 }
 
 /// <summary>A log line as the logs endpoint sends it.</summary>
