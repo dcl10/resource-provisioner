@@ -1,16 +1,17 @@
 import { API_BASE, ApiError, apiFetch, readApiError } from "@/lib/api";
 import { SseParser } from "@/lib/sse";
 
-/** Where a provisioning request has got to. */
+/**
+ * Where a provisioning request has got to. A cancelled or destroyed request is deleted, so there's no status for
+ * either: the API answers 404 for it from then on.
+ */
 export type RequestStatus =
   | "AwaitingConfirmation"
   | "Queued"
   | "Applying"
   | "Succeeded"
   | "Failed"
-  | "Destroying"
-  | "Destroyed"
-  | "Cancelled";
+  | "Destroying";
 
 /** A short reference to another request: one a request depends on, or one that depends on it. */
 export interface RequestLink {
@@ -144,8 +145,6 @@ export const statusLabels: Record<RequestStatus, string> = {
   Succeeded: "Provisioned",
   Failed: "Failed",
   Destroying: "Destroying",
-  Destroyed: "Destroyed",
-  Cancelled: "Cancelled",
 };
 
 /**
@@ -194,15 +193,15 @@ export function confirmRequests(ids: string[]): Promise<ProvisioningRequest[]> {
 }
 
 /**
- * Cancels a proposed request before it's confirmed.
+ * Cancels a proposed request before it's confirmed. Nothing was created, so the API deletes it: reading it afterwards
+ * answers 404.
  * @param id - the request ID
- * @returns the request, now Cancelled
+ * @returns once it's deleted
  */
-export function cancelRequest(id: string): Promise<ProvisioningRequest> {
-  return apiFetch<ProvisioningRequest>(
-    `/requests/${encodeURIComponent(id)}/cancel`,
-    { method: "POST" },
-  );
+export function cancelRequest(id: string): Promise<void> {
+  return apiFetch<void>(`/requests/${encodeURIComponent(id)}/cancel`, {
+    method: "POST",
+  });
 }
 
 /**
@@ -261,19 +260,20 @@ export interface LogHandlers {
 
 /**
  * Follows a request's Terraform log (`GET /api/requests/{id}/logs`, server-sent events): every line after `afterId`,
- * then new lines and status changes as the runner writes them. Resolves once no job is queued or running.
+ * then new lines and status changes as the runner writes them. Resolves once no job is queued or running, or once
+ * the request has been destroyed and so deleted, log and all.
  * @param id - the request ID
  * @param afterId - the last line already shown; 0 for all of them
  * @param handlers - called for each line and status
  * @param signal - stops following
- * @returns the status the request ended in
+ * @returns the status the request ended in, or null if it was deleted
  */
 export async function followLogs(
   id: string,
   afterId: number,
   handlers: LogHandlers,
   signal?: AbortSignal,
-): Promise<RequestStatus> {
+): Promise<RequestStatus | null> {
   const response = await fetch(
     `${API_BASE}/requests/${encodeURIComponent(id)}/logs`,
     {
@@ -301,6 +301,7 @@ export async function followLogs(
       else if (message.event === "status" && data.status)
         handlers.onStatus(data.status);
       else if (message.event === "end" && data.status) return data.status;
+      else if (message.event === "deleted") return null;
     }
   }
 
