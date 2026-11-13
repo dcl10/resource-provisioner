@@ -68,17 +68,43 @@ public partial class AgentToolExecutor(
     return Ok(manifest with { Variables = [.. manifest.Variables.Where(v => !v.Sensitive)] });
   }
 
+  /// <summary>
+  /// The user's live requests grouped under their projects: each project with its own request's details and the
+  /// requests in it. Anything not in a listed project (a request from before projects) is listed apart.
+  /// </summary>
   private async Task<ToolOutcome> ListMine(RequestUser user, CancellationToken cancellationToken)
   {
     // Only the user's own requests, even for an admin: the agent acts for the user, not as an admin.
-    var own = await requests.ListAsync(user with { IsAdmin = false }, cancellationToken: cancellationToken);
-    return Ok(own
+    var own = (await requests.ListAsync(user with { IsAdmin = false }, cancellationToken: cancellationToken))
       .Where(r => !Finished.Contains(r.Status))
-      .Select(r => new
+      .ToList();
+    var projects = own.Where(r => r.Type == Project.RequestType && r.Project is not null).ToList();
+    var projectIds = projects.Select(p => p.Project!.Id).ToHashSet();
+
+    bool InListedProject(ProvisioningRequestResponse r) =>
+      r.Type == Project.RequestType ? r.Project is not null : r.Project is { } p && projectIds.Contains(p.Id);
+
+    return Ok(new
+    {
+      projects = projects.Select(p => new
       {
-        requestId = r.Id, r.Type, r.DisplayName, r.Status, r.Variables, r.Outputs, r.CreatedAt,
-      }));
+        projectId = p.Project!.Id,
+        p.Project.Name,
+        p.Status,
+        projectRequestId = p.Id,
+        p.Variables,
+        p.Outputs,
+        p.CreatedAt,
+        resources = own
+          .Where(r => r.Type != Project.RequestType && r.Project?.Id == p.Project.Id)
+          .Select(Resource),
+      }),
+      notInAProject = own.Where(r => !InListedProject(r)).Select(Resource),
+    });
   }
+
+  private static object Resource(ProvisioningRequestResponse r) =>
+    new { requestId = r.Id, r.Type, r.DisplayName, r.Status, r.Variables, r.Outputs, r.CreatedAt };
 
   private async Task<ToolOutcome> Propose(
     JsonObject input,
@@ -87,13 +113,32 @@ public partial class AgentToolExecutor(
     CancellationToken cancellationToken)
   {
     var type = Str(input, "type");
+    var projectIdText = Str(input, AgentTools.ProjectId);
+    Guid? projectId = null;
+    if (projectIdText.Length > 0)
+    {
+      if (!Guid.TryParse(projectIdText, out var parsed))
+      {
+        // The service checks the project; a value that can't be an ID never reaches it.
+        return Error(JsonSerializer.Serialize(
+          new
+          {
+            errors = new Dictionary<string, string[]>
+            {
+              [ProvisioningRequestService.ProjectErrorKey] = [$"'{projectIdText}' isn't a project ID."],
+            },
+          },
+          Json));
+      }
+
+      projectId = parsed;
+    }
+
     var result = await requests.ProposeAsync(
       user,
       type,
       input["variables"]?.DeepClone() as JsonObject,
-      // propose_request's schema doesn't offer project_id yet (#56), so in practice the agent can only propose
-      // projects until it does; a project_id already given is passed on and checked like any other.
-      Guid.TryParse(Str(input, "project_id"), out var projectId) ? projectId : null,
+      projectId,
       conversationId,
       cancellationToken);
 
@@ -107,8 +152,12 @@ public partial class AgentToolExecutor(
       new
       {
         proposal,
-        next = "The request is awaiting confirmation. Tell the user to review the card and click Confirm; nothing " +
-               "is created until they do.",
+        next = type == Project.RequestType
+          ? $"The project is awaiting confirmation. To put resources in it now, give {proposal.Project?.Id} as " +
+            $"their {AgentTools.ProjectId}: it's provisioned before them. Tell the user to review the cards and " +
+            "click Confirm; nothing is created until they do."
+          : "The request is awaiting confirmation. Tell the user to review the card and click Confirm; nothing " +
+            "is created until they do.",
       },
       Json);
     return new ToolOutcome(content, IsError: false, proposal);
