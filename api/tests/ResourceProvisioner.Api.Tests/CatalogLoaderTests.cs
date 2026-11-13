@@ -16,7 +16,7 @@ public sealed class CatalogLoaderTests : IDisposable
     var entries = CatalogLoader.Load(ApiFactory.FixtureCatalogRoot);
 
     Assert.Equal(
-      ["test-database", "test-firewall", "test-group", "test-server"],
+      ["project", "test-database", "test-firewall", "test-group", "test-server"],
       entries.Select(e => e.Manifest.Id));
     Assert.All(entries, e => Assert.True(File.Exists(Path.Combine(e.ModuleDirectory, "main.tf"))));
   }
@@ -400,6 +400,37 @@ public sealed class CatalogLoaderTests : IDisposable
     File.AppendAllText(Path.Combine(_catalog.Root, "sample", "variables.tf"), "variable \"rp_other_id\" {\n}\n");
 
     AssertLoadFails("the runner reads the 'id' output of 'other', which has none");
+  }
+
+  [Fact]
+  public void Load_Throws_WhenAModuleTakesTheProjectId_ButThereIsNoProjectType()
+  {
+    _catalog.AddType("sample");
+    File.AppendAllText(Path.Combine(_catalog.Root, "sample", "variables.tf"), "variable \"rp_project_id\" {\n}\n");
+
+    AssertLoadFails("variables.tf declares rp_project_id, which the runner reads from the 'id' output of the " +
+                    "'project' type, but there's no such type or output.");
+  }
+
+  [Fact]
+  public void Load_Throws_WhenAReferenceWouldSetTheProjectId()
+  {
+    _catalog.AddTypeWithVariable(
+      """{ "name": "project_request_id", "type": "string", "description": "d", "references": "sample" }""",
+      "project_request_id");
+    File.AppendAllText(Path.Combine(_catalog.Root, "sample", "variables.tf"), "variable \"rp_project_id\" {\n}\n");
+
+    AssertLoadFails("project_request_id: the runner sets rp_project_id from the request's project");
+  }
+
+  [Fact]
+  public void Load_RecordsTheModulesVariables()
+  {
+    var server = CatalogLoader.Load(ApiFactory.FixtureCatalogRoot).Single(e => e.Manifest.Id == "test-server");
+
+    Assert.Contains("rp_project_id", server.ModuleVariables!);
+    Assert.Contains("rp_tags", server.ModuleVariables!);
+    Assert.Contains("name", server.ModuleVariables!);
   }
 
   [Theory]
