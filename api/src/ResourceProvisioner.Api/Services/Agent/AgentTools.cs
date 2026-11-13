@@ -31,6 +31,12 @@ public static class AgentTools
   /// <summary>Validates variables and creates a request awaiting the user's confirmation.</summary>
   public const string ProposeRequest = "propose_request";
 
+  /// <summary>
+  /// <c>propose_request</c>'s top-level parameter for the project the request goes in. A tool parameter, not a manifest
+  /// variable: required but nullable, and null only for a <c>project</c> request.
+  /// </summary>
+  public const string ProjectId = "project_id";
+
   /// <summary>The tool definitions for a catalog.</summary>
   /// <param name="catalog">The resource catalog.</param>
   /// <returns>The four tools, in a fixed order so the prompt cache stays valid.</returns>
@@ -59,9 +65,10 @@ public static class AgentTools
           ])),
       new AgentTool(
         ListMyResources,
-        "Lists the user's own requests: request ID, type, status, variables and non-secret outputs. Call it when " +
-        "the user refers to something they already have, or when a variable takes droplet request IDs (such as a " +
-        "firewall's droplet_request_ids): only the user's Succeeded droplets can be referenced.",
+        "Lists the user's own projects (project ID, name, status and the project's request ID), each with the " +
+        "requests in it: request ID, type, status, variables and non-secret outputs. Requests in no project are " +
+        "listed apart. Call it when the user refers to something they already have, to find the project_id to put a " +
+        "new request in, or when a variable takes request IDs (such as a firewall's droplet_request_ids).",
         Object([])),
       new AgentTool(
         ProposeRequest,
@@ -71,12 +78,23 @@ public static class AgentTools
         "user clicks Confirm on the card the app shows them. Call it once every required variable is known and the " +
         "user has agreed to the choices; leave out variables to take their defaults. For resources that build on " +
         "each other (a droplet and a firewall on it), propose the one needed first, then reference it by the " +
-        "requestId this tool returned: the app provisions them in that order.",
+        "requestId this tool returned: the app provisions them in that order. Every request but a project goes in " +
+        "one of the user's projects, given as project_id; a project proposed earlier in this reply is fine.",
         Object(
         [
           ("type", new JsonObject
           {
             ["type"] = "string", ["enum"] = Strings(typeIds), ["description"] = "The resource type's ID.",
+          }, true),
+          // A tool parameter, not a manifest variable. Required but nullable rather than optional, so it never
+          // counts towards strict mode's budget of optional parameters.
+          (ProjectId, new JsonObject
+          {
+            ["type"] = new JsonArray("string", "null"),
+            ["description"] =
+              $"The ID of the user's project to put this request in: a projectId from {ListMyResources}, or the " +
+              $"project.id an earlier {ProposeRequest} of a project returned (pending projects are fine; they're " +
+              "provisioned first). Null only when type is project, which belongs to no project.",
           }, true),
           ("variables", new JsonObject
           {
