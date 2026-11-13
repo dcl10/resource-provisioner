@@ -54,6 +54,21 @@ jobs:
     defaults:
       run:
         working-directory: api
+    services:
+      # Integration tests create a database per test host on this server (ApiFactory).
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: rp
+          POSTGRES_PASSWORD: dev_password
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rp -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v7
 
@@ -67,6 +82,8 @@ jobs:
 
       - name: test
         run: dotnet test --no-build
+        env:
+          RP_TEST_POSTGRES: Host=localhost;Port=5432;Database=postgres;Username=rp;Password=dev_password
 
   terraform:
     runs-on: ubuntu-latest
