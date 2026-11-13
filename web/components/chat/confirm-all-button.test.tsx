@@ -26,9 +26,9 @@ const firewall = proposal("req-2", "Cloud firewall");
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
-/** Answers each request's GET with its status, and the confirm-all POST with `post`. */
+/** Answers each request's GET with its status (404 for one that's been deleted), and the confirm-all POST with `post`. */
 function mockApi(
-  statuses: Record<string, RequestStatus>,
+  statuses: Record<string, RequestStatus | null>,
   post: () => Response = () =>
     jsonResponse([
       testRequest("Queued", { id: "req-1" }),
@@ -38,7 +38,10 @@ function mockApi(
   fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (init?.method === "POST") return post();
     const id = url.split("/").at(-1)!;
-    return jsonResponse(testRequest(statuses[id], { id }));
+    const status = statuses[id];
+    return status
+      ? jsonResponse(testRequest(status, { id }))
+      : jsonResponse({ detail: `Request ${id} doesn't exist.` }, 404);
   });
   vi.stubGlobal("fetch", fetchMock);
 }
@@ -62,6 +65,19 @@ describe("ConfirmAllButton", () => {
       "req-2": "AwaitingConfirmation",
     });
     renderButton();
+
+    expect(
+      await screen.findByRole("button", { name: "Confirm all (2)" }),
+    ).toBeInTheDocument();
+  });
+
+  it("leaves out a proposal that no longer exists", async () => {
+    mockApi({
+      "req-1": "AwaitingConfirmation",
+      "req-2": "AwaitingConfirmation",
+      "req-3": null,
+    });
+    renderButton([droplet, firewall, proposal("req-3", "Droplet")]);
 
     expect(
       await screen.findByRole("button", { name: "Confirm all (2)" }),
