@@ -23,6 +23,7 @@ public class ProjectsControllerTests(HighLimitApiFactory factory) : IClassFixtur
   [InlineData("GET", Route)]
   [InlineData("GET", $"{Route}/00000000-0000-0000-0000-000000000001")]
   [InlineData("POST", Route)]
+  [InlineData("DELETE", $"{Route}/00000000-0000-0000-0000-000000000001")]
   public async Task Endpoints_ReturnUnauthorized_WithoutCredentials(string method, string url)
   {
     var response = await factory.CreateAnonymousClient().SendAsync(new HttpRequestMessage(new HttpMethod(method), url));
