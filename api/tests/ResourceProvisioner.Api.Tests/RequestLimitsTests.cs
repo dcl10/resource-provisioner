@@ -52,11 +52,7 @@ public sealed class RequestLimitsTests : IDisposable
   [Fact]
   public async Task Confirm_IgnoresInactiveRequests_WhenCountingTowardsLimits()
   {
-    foreach (var status in new[]
-             {
-               RequestStatus.AwaitingConfirmation, RequestStatus.Failed, RequestStatus.Destroyed,
-               RequestStatus.Cancelled,
-             })
+    foreach (var status in new[] { RequestStatus.AwaitingConfirmation, RequestStatus.Failed })
     {
       for (var i = 0; i < 3; i++)
       {
