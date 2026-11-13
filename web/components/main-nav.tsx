@@ -1,6 +1,12 @@
 "use client";
 
-import { type LucideIcon, MessageSquare, Server, Users } from "lucide-react";
+import {
+  FolderKanban,
+  type LucideIcon,
+  MessageSquare,
+  Server,
+  Users,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -18,6 +24,7 @@ export interface NavItem {
 /** Every page in the main navigation, in display order. */
 export const navItems: NavItem[] = [
   { href: "/chat", label: "Chat", icon: MessageSquare },
+  { href: "/projects", label: "Projects", icon: FolderKanban },
   { href: "/requests", label: "Requests", icon: Server },
   { href: "/admin/users", label: "Users", icon: Users, adminOnly: true },
 ];
