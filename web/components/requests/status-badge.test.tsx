@@ -12,8 +12,6 @@ describe("StatusBadge", () => {
     ["Succeeded", "Provisioned"],
     ["Failed", "Failed"],
     ["Destroying", "Destroying"],
-    ["Destroyed", "Destroyed"],
-    ["Cancelled", "Cancelled"],
   ])("labels %s as %s", (status, label) => {
     render(<StatusBadge status={status} />);
 
@@ -29,7 +27,7 @@ describe("StatusBadge", () => {
     },
   );
 
-  it.each<RequestStatus>(["Succeeded", "Failed", "Destroyed", "Cancelled"])(
+  it.each<RequestStatus>(["AwaitingConfirmation", "Succeeded", "Failed"])(
     "shows no spinner once %s",
     (status) => {
       const { container } = render(<StatusBadge status={status} />);
