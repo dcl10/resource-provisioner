@@ -24,7 +24,7 @@ public interface IRequestDeleter
   /// <summary>
   /// Deletes a request whose <c>terraform destroy</c> has just finished, or that never had state to destroy, along
   /// with its Terraform state. Only the runner calls this, and only after a successful destroy: a request whose destroy
-  /// failed keeps everything, its state above all, so it can be destroyed again.
+  /// failed moves to <c>DestroyFailed</c> and keeps everything, its state above all, so it can be destroyed again.
   /// </summary>
   /// <param name="requestId">The request, which must be <c>Destroying</c>.</param>
   /// <param name="cancellationToken">Cancels the delete; nothing is deleted then.</param>

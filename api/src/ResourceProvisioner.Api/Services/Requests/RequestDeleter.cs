@@ -43,8 +43,8 @@ public partial class RequestDeleter(
       : null;
 
     // What depends on it, directly or by being in the project it backs. Only proposals may: anything confirmed may
-    // exist, and destroy refuses while it does, so finding one here means something went wrong; stop rather than
-    // orphan it.
+    // exist, and the runner doesn't destroy a request while something that may exist depends on it, so finding one
+    // here means something went wrong; stop rather than orphan it.
     var projectId = await db.Projects
       .Where(p => p.ProjectRequestId == requestId)
       .Select(p => (Guid?)p.Id)
