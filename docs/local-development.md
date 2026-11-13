@@ -106,22 +106,26 @@ that touches sign-in, the agent, the runner or the images.
    tagged `resource-provisioner`, `rp-<request ID>` and `rp-owner-...`.
 7. **Firewall on its tag:** in the chat, ask for a firewall allowing SSH to that droplet. The agent finds it with
    `list_my_resources` and proposes a firewall targeting its request ID. Confirm it. In DigitalOcean, the firewall
-   applies to the droplet through its `rp-<request ID>` tag. While the firewall exists, the droplet's page offers no
-   Destroy, only "first destroy Cloud firewall ...".
+   applies to the droplet through its `rp-<request ID>` tag. The droplet's page lists the firewall under **Needed by**.
 8. **Secrets (optional; the cost hint on its card says what it's billed at):** droplets and firewalls have no secret outputs. To check
    the reveal, ask for a Spaces bucket or a Postgres database: its request page masks the keys or passwords until the
    owner clicks **Reveal secrets**. Signed in as the admin, that request has no reveal at all. Destroy it afterwards.
-9. **Destroy both:** destroy the firewall, then the droplet, from their request pages. Each confirms in a dialog, then
-   streams `terraform destroy`; once it's done the request is deleted and the page goes back to the requests list,
-   where it's no longer listed. Nothing is left in DigitalOcean, and its chat card now says **No longer exists**.
+9. **Destroy both:** on the droplet's page, click **Destroy**. The dialog lists what's destroyed, in order: the
+   firewall, then the droplet. Confirm: the log streams `terraform destroy`, and once both are done they're deleted and
+   the page goes back to the droplet's project page, where neither is listed. Nothing is left in DigitalOcean, and
+   their chat cards now say **No longer exists**.
 10. **A sequence in one go:** in a new conversation, ask for a droplet and a firewall allowing SSH to it, together. The
     agent proposes both; the firewall's card says **Runs after** the droplet. Click **Confirm all (2)**: the droplet is
-    provisioned first, the firewall's page says it's waiting for it, then provisions. Destroy both again.
+    provisioned first, the firewall's page says it's waiting for it, then provisions. Destroy the droplet, which takes the firewall with it.
 11. **A project:** ask for a project and a droplet in it, together. The droplet's card names the **Project** and says
-    **Runs after** the project; confirm both. In DigitalOcean the droplet is in the new project, not the default one. The project's page
-    lists the droplet under **Needed by** and offers no Destroy until the droplet is destroyed; then destroy the
-    project too.
-12. **Limits:** optionally, set `LIMITS_MAX_ACTIVE_REQUESTS_PER_USER=1` in `.env`, run
+    **Runs after** the project; confirm both. In DigitalOcean the droplet is in the new project, not the default one. The
+    project's page lists the droplet under **Resources**.
+12. **Delete a project:** in that project, ask for a firewall allowing SSH to its droplet and confirm it. On the project
+    page, click **Delete project**: the dialog lists the firewall, the droplet and then the project, in that order.
+    Confirm: the resources go to **Destroying**, then disappear one by one, and once the project's own request is
+    destroyed the page says the project no longer exists and goes back to the projects list. Nothing is left in
+    DigitalOcean: no droplet, no firewall, no project.
+13. **Limits:** optionally, set `LIMITS_MAX_ACTIVE_REQUESTS_PER_USER=1` in `.env`, run
     `docker compose --profile app up -d` again, and confirm two proposals. The second card says you're at your limit.
 
 ## Troubleshooting
