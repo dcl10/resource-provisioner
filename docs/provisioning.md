@@ -165,5 +165,8 @@ writes from its own scope. An `AwaitingConfirmation` request ends straight away;
 
 `ITerraformProcessRunner` is the only thing that starts a process. Tests swap it for `FakeTerraform`, which records
 each command and plays back scripted lines and exit codes, and the test host leaves `TerraformRunner` out so tests
-decide when jobs run. Tests run on SQLite, so `ITerraformStateStore` is swapped for `FakeTerraformState`, where a
-test says which requests have state; `TerraformStateStoreTests` covers the connection-string conversion. `TerraformProcessRunnerTests` runs the real wrapper against `/bin/sh` instead of Terraform.
+decide when jobs run. Tests run on Postgres, each test host on its own database built by the migrations
+([architecture.md](architecture.md#api-layout)), so the runner, the logs endpoint and the test can all use it at once.
+`FakeTerraform` never writes state, so `ITerraformStateStore` is swapped for `FakeTerraformState`, where a test says
+which requests have state; `TerraformStateStoreTests` runs the real store against a test database (a `states` table
+like the `pg` backend's) and covers the connection-string conversion. `TerraformProcessRunnerTests` runs the real wrapper against `/bin/sh` instead of Terraform.
