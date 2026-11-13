@@ -129,8 +129,6 @@ public class ProvisioningRequestServiceTests(HighLimitApiFactory factory) : ICla
   [Theory]
   [InlineData(RequestStatus.Failed)]
   [InlineData(RequestStatus.Destroying)]
-  [InlineData(RequestStatus.Destroyed)]
-  [InlineData(RequestStatus.Cancelled)]
   public async Task ProposeAsync_RejectsReference_WhenOwnRequestCantBeBuiltOn(RequestStatus status)
   {
     var server = await factory.SeedServerAsync(_owner.UserId, status);
@@ -256,8 +254,6 @@ public class ProvisioningRequestServiceTests(HighLimitApiFactory factory) : ICla
   [Theory]
   [InlineData(RequestStatus.Failed)]
   [InlineData(RequestStatus.Destroying)]
-  [InlineData(RequestStatus.Destroyed)]
-  [InlineData(RequestStatus.Cancelled)]
   public async Task ProposeAsync_Rejects_WhenTheProjectCantBeBuiltOn(RequestStatus status)
   {
     var project = await factory.SeedProjectAsync(_owner.UserId, status, name: "shop");
@@ -302,16 +298,56 @@ public class ProvisioningRequestServiceTests(HighLimitApiFactory factory) : ICla
   }
 
   [Fact]
-  public async Task ConfirmAsync_Refuses_WhenTheProjectWentAwayMeanwhile()
+  public async Task ConfirmAsync_Refuses_WhenTheProjectWasCancelledMeanwhile()
   {
-    var project = await factory.SeedProjectAsync(_owner.UserId, RequestStatus.Cancelled);
-    var server = await factory.SeedRequestAsync(_owner.UserId, RequestStatus.AwaitingConfirmation, projectId: project.Id);
+    var proposed = await Propose(_owner, Project.RequestType, """{ "name": "shop" }""");
+    var member = await ProposeIn(proposed.Request!.Project!.Id, "test-server", """{ "name": "web-1" }""");
     using var scope = factory.Services.CreateScope();
     var service = scope.ServiceProvider.GetRequiredService<IProvisioningRequestService>();
+    await service.CancelAsync(proposed.Request.Id, _owner);
 
-    var ex = await Assert.ThrowsAsync<RequestValidationException>(() => service.ConfirmAsync(server.Id, _owner));
+    var ex = await Assert.ThrowsAsync<RequestValidationException>(
+      () => service.ConfirmAsync(member.Request!.Id, _owner));
 
-    Assert.Contains(ProvisioningRequestService.ProjectErrorKey, ex.Errors.Keys);
+    Assert.Null((await factory.FindRequestAsync(member.Request!.Id))!.ProjectId);
+    Assert.Equal(
+      ["It isn't in a project any more (its project may have been cancelled or destroyed); ask for it again in " +
+       "one of your projects."],
+      ex.Errors[ProvisioningRequestService.ProjectErrorKey]);
+  }
+
+  [Fact]
+  public async Task ConfirmAsync_Refuses_WhenAReferencedRequestWasCancelledMeanwhile()
+  {
+    var server = await Propose(_owner, "test-server", """{ "name": "web-1" }""");
+    var database = await Propose(_owner, DatabaseType, DatabaseReferencing(server.Request!.Id));
+    using var scope = factory.Services.CreateScope();
+    var service = scope.ServiceProvider.GetRequiredService<IProvisioningRequestService>();
+    await service.CancelAsync(server.Request.Id, _owner);
+
+    var ex = await Assert.ThrowsAsync<RequestValidationException>(
+      () => service.ConfirmAsync(database.Request!.Id, _owner));
+
+    Assert.Equal(
+      [$"'{server.Request.Id}' isn't the request ID of one of your Test server requests."],
+      ex.Errors["allowed_droplet_request_ids[0]"]);
+  }
+
+  [Fact]
+  public async Task ProposeAsync_RejectsReference_ToACancelledRequest()
+  {
+    var server = await Propose(_owner, "test-server", """{ "name": "web-1" }""");
+    using (var scope = factory.Services.CreateScope())
+    {
+      await scope.ServiceProvider.GetRequiredService<IProvisioningRequestService>()
+        .CancelAsync(server.Request!.Id, _owner);
+    }
+
+    var result = await Propose(_owner, DatabaseType, DatabaseReferencing(server.Request!.Id));
+
+    Assert.Equal(
+      [$"'{server.Request.Id}' isn't the request ID of one of your Test server requests."],
+      result.Errors["allowed_droplet_request_ids[0]"]);
   }
 
   [Fact]
