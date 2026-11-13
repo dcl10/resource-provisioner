@@ -7,7 +7,8 @@ using Models;
 /// <see cref="Move"/>, so an illegal one (confirming twice, destroying something still applying) can't happen. A
 /// request leaves the machine by being deleted (<see cref="IRequestDeleter"/>): from
 /// <see cref="RequestStatus.AwaitingConfirmation"/> when the owner cancels it, and from
-/// <see cref="RequestStatus.Destroying"/> once the runner has destroyed it.
+/// <see cref="RequestStatus.Destroying"/> once the runner has destroyed it. A destroy that stops before Terraform has
+/// touched the request goes back with <see cref="RevertDestroy"/>.
 /// </summary>
 public static class RequestStateMachine
 {
@@ -35,8 +36,19 @@ public static class RequestStateMachine
     // A failed apply can leave resources behind (a droplet created before a later step failed), and a failed
     // destroy certainly can, so a failed request can always be destroyed (again).
     [RequestStatus.Failed] = [RequestStatus.Destroying],
-    [RequestStatus.Destroying] = [RequestStatus.Failed],
+    [RequestStatus.Destroying] = [RequestStatus.DestroyFailed],
+    [RequestStatus.DestroyFailed] = [RequestStatus.Destroying],
   };
+
+  /// <summary>
+  /// The statuses a request can be destroyed from, and so the ones <see cref="RevertDestroy"/> can return it to.
+  /// </summary>
+  public static readonly IReadOnlyList<RequestStatus> DestroyableStatuses =
+  [
+    RequestStatus.Succeeded,
+    RequestStatus.Failed,
+    RequestStatus.DestroyFailed,
+  ];
 
   /// <summary>Whether a request can move from <paramref name="from"/> to <paramref name="to"/>.</summary>
   /// <param name="from">The current status.</param>
@@ -64,11 +76,48 @@ public static class RequestStateMachine
         $"Request {request.Id} is {request.Status}, so it can't move to {to}.");
     }
 
+    if (to == RequestStatus.Destroying)
+    {
+      request.StatusBeforeDestroy = request.Status;
+      request.DestroyStoppedById = null;
+    }
+    else
+    {
+      request.StatusBeforeDestroy = null;
+    }
+
     request.Status = to;
     request.UpdatedAt = now;
     if (to == RequestStatus.Queued)
     {
       request.ConfirmedAt = now;
     }
+  }
+
+  /// <summary>
+  /// Moves a <see cref="RequestStatus.Destroying"/> request back to the status it had before
+  /// (<see cref="ProvisioningRequest.StatusBeforeDestroy"/>), because its destroy stopped before Terraform touched it:
+  /// something that depends on it failed to destroy. Nothing was done to it, so it really is still in that status. A
+  /// request moved to Destroying before that was recorded goes to <see cref="RequestStatus.Failed"/>, which claims
+  /// nothing about what exists and can be destroyed again.
+  /// </summary>
+  /// <param name="request">The request to change.</param>
+  /// <param name="stoppedById">The request whose failed destroy stopped this one's.</param>
+  /// <param name="now">The current time.</param>
+  /// <exception cref="RequestConflictException">The request isn't Destroying.</exception>
+  public static void RevertDestroy(ProvisioningRequest request, Guid stoppedById, DateTimeOffset now)
+  {
+    if (request.Status != RequestStatus.Destroying)
+    {
+      throw new RequestConflictException(
+        $"Request {request.Id} is {request.Status}, so there's no destroy to stop.");
+    }
+
+    request.Status = request.StatusBeforeDestroy is { } before && DestroyableStatuses.Contains(before)
+      ? before
+      : RequestStatus.Failed;
+    request.StatusBeforeDestroy = null;
+    request.DestroyStoppedById = stoppedById;
+    request.UpdatedAt = now;
   }
 }
