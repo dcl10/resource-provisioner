@@ -11,7 +11,7 @@ import {
   requestsQueryKey,
 } from "@/components/requests/use-requests";
 import { Button } from "@/components/ui/button";
-import { ApiError, retryUnlessClientError } from "@/lib/api";
+import { ApiError, isNotFound, retryUnlessClientError } from "@/lib/api";
 import type { Proposal } from "@/lib/chat";
 import { confirmRequests, getRequest } from "@/lib/requests";
 
@@ -37,8 +37,11 @@ export function ConfirmAllButton({ proposals }: { proposals: Proposal[] }) {
     })),
   });
 
+  // A cancelled one is deleted: its re-read answers 404 but keeps the last data, which still says it's waiting.
   const pending = proposals.filter(
-    (_, i) => statuses[i]?.data?.status === "AwaitingConfirmation",
+    (_, i) =>
+      statuses[i]?.data?.status === "AwaitingConfirmation" &&
+      !isNotFound(statuses[i]?.error),
   );
 
   const confirmAll = useMutation({
