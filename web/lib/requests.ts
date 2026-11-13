@@ -22,6 +22,12 @@ export interface RequestLink {
   status: RequestStatus;
 }
 
+/** A short reference to a project: the one a request belongs to, or backs. */
+export interface ProjectLink {
+  id: string;
+  name: string;
+}
+
 /** A provisioning request as `GET /api/requests/{id}` returns it. Never holds secrets. Dates are ISO 8601. */
 export interface ProvisioningRequest {
   id: string;
