@@ -11,9 +11,9 @@ using Services.Requests;
 using Xunit;
 
 /// <summary>
-/// DigitalOcean projects: the real <c>project</c> manifest, the types that can go in one, free types and the limits,
-/// and the runner passing a project's ID to its members. The fixture <c>test-group</c> stands in for a project and
-/// <c>test-firewall</c>'s <c>group_request_id</c> for a member's <c>project_request_id</c>.
+/// DigitalOcean projects in the catalog and the runner: the real <c>project</c> manifest, which modules take the
+/// project's ID, free types and the limits, and the runner passing <c>rp_project_id</c> (and a reference's
+/// <c>rp_&lt;x&gt;_id</c>, with the fixture <c>test-group</c>) to a module.
 /// </summary>
 public class ProjectsTests : IClassFixture<HighLimitApiFactory>
 {
@@ -43,6 +43,7 @@ public class ProjectsTests : IClassFixture<HighLimitApiFactory>
     Assert.Equal("Development", result.Values["environment"]!.GetValue<string>());
     Assert.True(Real.Find("project")!.Free);
     Assert.DoesNotContain(Real.Find("project")!.Outputs, o => o.Sensitive);
+    Assert.Contains(Real.Find("project")!.Outputs, o => o.Name == RunnerVariables.DependencyOutput);
   }
 
   [Theory]
@@ -68,44 +69,31 @@ public class ProjectsTests : IClassFixture<HighLimitApiFactory>
   }
 
   [Theory]
-  [InlineData("droplet")]
-  [InlineData("postgres")]
-  [InlineData("spaces-bucket")]
-  public void Members_TakeAnOptionalProjectReference(string type)
+  [InlineData("droplet", true)]
+  [InlineData("postgres", true)]
+  [InlineData("spaces-bucket", true)]
+  [InlineData("firewall", false)]
+  [InlineData("project", false)]
+  public void OnlyTypesThatCanBeInADigitalOceanProject_TakeItsId(string type, bool takesIt)
   {
-    var variable = Real.Find(type)!.Variables.Single(v => v.Name == "project_request_id");
-
-    Assert.Equal("project", variable.References);
-    Assert.False(variable.Required);
-    Assert.Equal("rp_project_id", RunnerVariables.DependencyVariable(variable));
+    Assert.Equal(takesIt, Real.ModuleDeclares(type, RunnerVariables.ProjectIdVariable));
   }
 
   [Fact]
-  public void Firewalls_CantGoInAProject()
+  public void NoManifest_TakesAProjectReference()
   {
-    Assert.DoesNotContain(Real.Find("firewall")!.Variables, v => v.References == "project");
-  }
-
-  [Theory]
-  [InlineData("not-a-guid")]
-  [InlineData("3F2B8C1E-5D4A-4E6F-9A7B-1C2D3E4F5A6B")]
-  public void Members_RejectAProjectReference_ThatIsntALowercaseGuid(string value)
-  {
-    var input = new JsonObject { ["name"] = "files", ["project_request_id"] = value };
-
-    Assert.True(Real.ValidateVariables("spaces-bucket", input).Errors.ContainsKey("project_request_id"));
+    Assert.All(Real.Types, t => Assert.DoesNotContain(t.Variables, v => v.References == "project"));
+    Assert.All(Real.Types, t => Assert.DoesNotContain(t.Variables, v => v.Name == "project_request_id"));
   }
 
   [Fact]
-  public void ForDependencies_SetsTheReferencedRequestsId()
+  public void ForDependencies_SetsTheProjectsId()
   {
-    var manifest = Real.Find("droplet")!;
-    var variables = new JsonObject { ["name"] = "web", ["project_request_id"] = RequestId };
-
     var result = RunnerVariables.ForDependencies(
-      manifest,
-      variables,
-      new Dictionary<Guid, string?> { [Guid.Parse(RequestId)] = """{"id":"do-project-1","name":"shop"}""" });
+      Real.Find("droplet")!,
+      new JsonObject { ["name"] = "web" },
+      new Dictionary<Guid, string?> { [Guid.Parse(RequestId)] = """{"id":"do-project-1","name":"shop"}""" },
+      Guid.Parse(RequestId));
 
     Assert.True(JsonNode.DeepEquals(JsonNode.Parse("""{"rp_project_id":"do-project-1"}"""), result));
   }
@@ -124,12 +112,44 @@ public class ProjectsTests : IClassFixture<HighLimitApiFactory>
   [Fact]
   public void ForDependencies_Throws_WhenTheProjectHasNoIdYet()
   {
-    var variables = new JsonObject { ["name"] = "web", ["project_request_id"] = RequestId };
-
     Assert.Throws<InvalidOperationException>(() => RunnerVariables.ForDependencies(
       Real.Find("droplet")!,
-      variables,
-      new Dictionary<Guid, string?> { [Guid.Parse(RequestId)] = null }));
+      new JsonObject { ["name"] = "web" },
+      new Dictionary<Guid, string?> { [Guid.Parse(RequestId)] = null },
+      Guid.Parse(RequestId)));
+  }
+
+  [Fact]
+  public async Task Runner_PassesTheProjectsId_ToAModuleThatTakesIt()
+  {
+    var project = await _factory.SeedProjectAsync(_userId, name: "shop");
+    var server = await _factory.SeedRequestAsync(_userId, RequestStatus.Queued, projectId: project.Id);
+    await _factory.AddDependencyAsync(server.Id, project.ProjectRequestId);
+
+    await Run(server.Id);
+
+    Assert.Equal(RequestStatus.Succeeded, (await _factory.FindRequestAsync(server.Id))!.Status);
+    var tfvars = await Tfvars(server.Id);
+    Assert.Equal("prj-shop", tfvars["rp_project_id"]!.GetValue<string>());
+    var saved = JsonNode.Parse((await _factory.FindRequestAsync(server.Id))!.TerraformVariables!)!;
+    Assert.Equal("prj-shop", saved["rp_project_id"]!.GetValue<string>());
+  }
+
+  [Fact]
+  public async Task Runner_LeavesTheProjectsIdOut_OfAModuleThatDoesntTakeIt()
+  {
+    var project = await _factory.SeedProjectAsync(_userId);
+    var firewall = await _factory.SeedRequestAsync(
+      _userId,
+      RequestStatus.Queued,
+      type: "test-firewall",
+      variables: """{"rules":[]}""",
+      projectId: project.Id);
+
+    await Run(firewall.Id);
+
+    Assert.Equal(RequestStatus.Succeeded, (await _factory.FindRequestAsync(firewall.Id))!.Status);
+    Assert.Null((await Tfvars(firewall.Id))["rp_project_id"]);
   }
 
   [Fact]
@@ -148,17 +168,10 @@ public class ProjectsTests : IClassFixture<HighLimitApiFactory>
       variables: $$"""{"rules":[],"group_request_id":"{{group.Id}}"}""");
     await _factory.AddDependencyAsync(firewall.Id, group.Id);
 
-    using (var scope = _factory.Services.CreateScope())
-    {
-      await scope.ServiceProvider.GetRequiredService<ITerraformJobProcessor>()
-        .RunAsync(firewall.Id, CancellationToken.None);
-    }
+    await Run(firewall.Id);
 
     Assert.Equal(RequestStatus.Succeeded, (await _factory.FindRequestAsync(firewall.Id))!.Status);
-    var tfvars = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(
-      _factory.WorkspacesRoot,
-      firewall.Id.ToString(),
-      TerraformWorkspace.VariablesFile)))!;
+    var tfvars = await Tfvars(firewall.Id);
     Assert.Equal("grp-123", tfvars["rp_group_id"]!.GetValue<string>());
     Assert.Equal(group.Id.ToString(), tfvars["group_request_id"]!.GetValue<string>());
   }
@@ -203,4 +216,16 @@ public class ProjectsTests : IClassFixture<HighLimitApiFactory>
 
     Assert.Equal(HttpStatusCode.OK, response.StatusCode);
   }
+
+  private async Task Run(Guid requestId)
+  {
+    using var scope = _factory.Services.CreateScope();
+    await scope.ServiceProvider.GetRequiredService<ITerraformJobProcessor>().RunAsync(requestId, CancellationToken.None);
+  }
+
+  private async Task<JsonNode> Tfvars(Guid requestId) =>
+    JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(
+      _factory.WorkspacesRoot,
+      requestId.ToString(),
+      TerraformWorkspace.VariablesFile)))!;
 }
