@@ -23,7 +23,13 @@ using System.Text.Json.Nodes;
 /// <param name="UpdatedAt">When its status last changed.</param>
 /// <param name="ConfirmedAt">When the owner confirmed it, if they have.</param>
 /// <param name="DependsOn">The requests it references, which are provisioned before it.</param>
-/// <param name="Dependents">The requests that reference it, which must be destroyed before it.</param>
+/// <param name="Dependents">
+/// The requests that depend on it (reference it, or are in the project it backs): destroying it destroys them first.
+/// </param>
+/// <param name="DestroyStoppedBy">
+/// When its destroy stopped because something that depends on it failed to destroy, and it went back to the status it
+/// had: that request, while it still exists. Null otherwise, and once it's destroyed again.
+/// </param>
 public record ProvisioningRequestResponse(
   Guid Id,
   string OwnerId,
@@ -39,4 +45,5 @@ public record ProvisioningRequestResponse(
   DateTimeOffset UpdatedAt,
   DateTimeOffset? ConfirmedAt,
   IReadOnlyList<RequestLink> DependsOn,
-  IReadOnlyList<RequestLink> Dependents);
+  IReadOnlyList<RequestLink> Dependents,
+  RequestLink? DestroyStoppedBy = null);
