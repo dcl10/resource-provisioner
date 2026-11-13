@@ -49,19 +49,23 @@ function json(body: unknown, status = 200) {
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
+const notFound = () =>
+  json({ title: "Not Found", detail: "Request req-1 doesn't exist." }, 404);
+
 /**
- * Answers GET /requests/req-1 with the request in `initial` status, and the POSTs with `post`. Like the API, a
- * successful POST changes what GET returns.
+ * Answers GET /requests/req-1 with the request in `initial` status (404 if null), and the POSTs with `post`. Like the
+ * API, a successful POST changes what GET returns, and a 204 (a cancel) deletes the request.
  */
 function mockApi(
-  initial: RequestStatus,
+  initial: RequestStatus | null,
   post: (url: string) => Response = () => json(request("Queued")),
 ) {
-  let current = request(initial);
+  let current: ProvisioningRequest | null = initial ? request(initial) : null;
   fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-    if (init?.method !== "POST") return json(current);
+    if (init?.method !== "POST") return current ? json(current) : notFound();
     const response = post(url);
-    if (response.ok)
+    if (response.status === 204) current = null;
+    else if (response.ok)
       current = (await response.clone().json()) as ProvisioningRequest;
     return response;
   });
@@ -206,8 +210,8 @@ describe("ProposalCard", () => {
     expect(push).toHaveBeenCalledWith("/requests/req-1");
   });
 
-  it("cancels the request", async () => {
-    mockApi("AwaitingConfirmation", () => json(request("Cancelled")));
+  it("cancels the request, after which it no longer exists", async () => {
+    mockApi("AwaitingConfirmation", () => new Response(null, { status: 204 }));
     const user = userEvent.setup();
     renderCard();
 
@@ -217,9 +221,31 @@ describe("ProposalCard", () => {
       await screen.findByText("Droplet proposal cancelled"),
     ).toBeInTheDocument();
     expect(posts()).toEqual(["/api/proxy/requests/req-1/cancel"]);
-    expect(screen.getByText("Cancelled")).toBeInTheDocument();
+    expect(await screen.findByText("No longer exists")).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Confirm" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "View request" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("says a request that's been cancelled or destroyed since no longer exists", async () => {
+    mockApi(null);
+    renderCard();
+
+    expect(await screen.findByText("No longer exists")).toBeInTheDocument();
+    expect(
+      screen.getByText(/This request no longer exists/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Confirm" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Cancel" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Couldn't load this request's status/),
     ).not.toBeInTheDocument();
   });
 
@@ -246,7 +272,7 @@ describe("ProposalCard", () => {
         {
           title: "The request's variables are no longer valid.",
           errors: {
-            "droplet_request_ids[0]": ["Droplet request x is Destroyed."],
+            "droplet_request_ids[0]": ["Droplet request x is Destroying."],
           },
           status: 422,
         },
@@ -260,7 +286,7 @@ describe("ProposalCard", () => {
 
     const alert = await screen.findByRole("alert");
     expect(
-      within(alert).getByText("Droplet request x is Destroyed."),
+      within(alert).getByText("Droplet request x is Destroying."),
     ).toBeInTheDocument();
   });
 
