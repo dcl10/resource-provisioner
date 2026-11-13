@@ -73,7 +73,7 @@ errors by field for it to fix.
 | --- | --- | --- |
 | `list_resource_types` | none | `[{type, displayName, description, costHint}]` for every type |
 | `get_resource_spec` | `type` (enum of the catalog's IDs) | The type's manifest without its sensitive variables: every variable's rules, `atLeastOneOf`, outputs |
-| `list_my_resources` | none | The user's own requests that aren't Cancelled or Destroyed, grouped by project: `{"projects": [{projectId, name, status, projectRequestId, variables, outputs, createdAt, resources: [...]}], "notInAProject": [...]}`. Each resource has its request ID, type, status, variables and non-sensitive outputs; `notInAProject` holds requests from before projects. Only the user's own, **admins included**: the agent acts for the user. |
+| `list_my_resources` | none | The user's own requests (cancelled and destroyed ones are deleted, so never appear), grouped by project: `{"projects": [{projectId, name, status, projectRequestId, variables, outputs, createdAt, resources: [...]}], "notInAProject": [...]}`. Each resource has its request ID, type, status, variables and non-sensitive outputs; `notInAProject` holds requests from before projects, and proposals whose project was cancelled or destroyed. Only the user's own, **admins included**: the agent acts for the user. |
 | `propose_request` | `type` (enum), `project_id` (string or null, required) and `variables` (`anyOf` the types' variable objects) | Calls `IProvisioningRequestService.ProposeAsync` as the user, recording the conversation ID. Invalid: `is_error` with `{"errors": {field path: [messages]}}`, for Claude to fix. Valid: `{"proposal": ..., "next": ...}`, and the browser gets a `proposal` event. A reference variable's description says which type it takes, and that pending requests (such as one proposed earlier in the reply) are fine. |
 
 ### `project_id`
@@ -86,8 +86,9 @@ a top-level `project_id`. It's a tool parameter, not a manifest variable, so it 
   `AgentToolsTests.RealCatalog_StaysWithinStrictToolLimits` checks its own parameters are all required, so it would
   still fit if it were.
 - **Null only for a `project`**, which belongs to no project. Otherwise it must be one of the user's own projects,
-  admins included, that is pending or provisioned (not failed, cancelled, being destroyed or destroyed). Someone else's
-  project and a missing one get the same error, on `project_id`; so does a value that isn't a GUID.
+  admins included, that is pending or provisioned (not failed or being destroyed). Someone else's project and a
+  missing one (including one cancelled or destroyed, and so deleted) get the same error, on `project_id`; so does a
+  value that isn't a GUID.
 - **A project proposed in the same reply works.** Proposing a `project` returns its new project as `proposal.project`
   and a `next` hint naming the ID to use, so "a project with a droplet in it" is two `propose_request` calls in one
   reply. The member depends on the project's request, so it's provisioned first and can't be confirmed before it;
