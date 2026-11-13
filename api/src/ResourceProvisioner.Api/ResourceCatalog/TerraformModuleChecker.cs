@@ -86,6 +86,13 @@ internal static partial class TerraformModuleChecker
     return problems;
   }
 
+  /// <summary>The names of the variables a module's <c>variables.tf</c> declares; empty if there's no such file.</summary>
+  public static IReadOnlySet<string> ReadVariableNames(string moduleDirectory)
+  {
+    var path = Path.Combine(moduleDirectory, "variables.tf");
+    return File.Exists(path) ? ReadBlocks(path, "variable").Keys.ToHashSet(StringComparer.Ordinal) : new HashSet<string>();
+  }
+
   /// <summary>Reads the top-level blocks of one kind: name to whether the block sets <c>sensitive = true</c>.</summary>
   private static Dictionary<string, bool> ReadBlocks(string path, string kind) =>
     BlockRegex().Matches(File.ReadAllText(path))
