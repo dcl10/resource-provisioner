@@ -1,7 +1,7 @@
 {
   "id": "project",
   "displayName": "Project",
-  "description": "A DigitalOcean project: a folder in the control panel that groups the user's related droplets, Postgres databases and Spaces buckets, for example everything for one app. Pick this when the user wants their resources grouped; then put resources in it by passing its request ID as project_request_id when proposing them (it can still be pending: it's created first). Firewalls can't be put in a project (a DigitalOcean limitation). A project can only be destroyed once everything in it has been. It's free and doesn't count towards the user's limit on active requests.",
+  "description": "A DigitalOcean project: a folder in the control panel that groups the user's related droplets, Postgres databases and Spaces buckets, for example everything for one app. Every other resource belongs to exactly one of the user's projects, so the user needs one before anything else; resources are put in it by giving its project ID when proposing them (it can still be pending: it's created first). Firewalls belong to a project in this app too, but DigitalOcean can't show them in it. A project can only be destroyed once everything in it has been. It's free and doesn't count towards the user's limit on active requests.",
   "costHint": "Free.",
   "free": true,
   "variables": [
