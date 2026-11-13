@@ -13,8 +13,6 @@ const variants: Record<
   Succeeded: "default",
   Failed: "destructive",
   Destroying: "secondary",
-  Destroyed: "outline",
-  Cancelled: "outline",
 };
 
 /**
