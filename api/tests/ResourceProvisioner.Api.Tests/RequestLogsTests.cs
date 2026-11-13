@@ -2,6 +2,7 @@ namespace ResourceProvisioner.Api.Tests;
 
 using System.Globalization;
 using System.Net;
+using System.Text;
 using Data;
 using Fixtures;
 using Microsoft.Extensions.DependencyInjection;
@@ -89,13 +90,24 @@ public class RequestLogsTests(ApiFactory factory) : IClassFixture<ApiFactory>
   {
     var request = await factory.SeedRequestAsync(_userId, RequestStatus.Applying);
 
-    var reading = User.GetStringAsync($"/api/requests/{request.Id}/logs");
-    await Task.Delay(100);
+    using var response = await User.GetAsync(
+      $"/api/requests/{request.Id}/logs", HttpCompletionOption.ResponseHeadersRead);
+    using var reader = new StreamReader(await response.Content.ReadAsStreamAsync());
+
+    // Change nothing until the stream has sent its first event, so that event is the Applying status.
+    var body = new StringBuilder();
+    while (await reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(10)) is { Length: > 0 } line)
+    {
+      body.Append(line).Append('\n');
+    }
+
+    body.Append('\n');
     await AddLines(request.Id, (LogSource.Stdout, "late line"));
     await SetStatus(request.Id, RequestStatus.Succeeded);
+    body.Append(await reader.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(10)));
 
     // The line and the new status may arrive in the same poll, so only their relative order with the end is fixed.
-    var events = Sse.Parse(await reading.WaitAsync(TimeSpan.FromSeconds(10)));
+    var events = Sse.Parse(body.ToString());
     Assert.Equal(("status", "Applying"), (events[0].Type, events[0].Data["status"]!.GetValue<string>()));
     Assert.Contains(events, e => e.Type == "status" && e.Data["status"]!.GetValue<string>() == "Succeeded");
     Assert.Equal("late line", Assert.Single(events, e => e.Type == "log").Data["text"]!.GetValue<string>());
