@@ -25,17 +25,14 @@ resource "digitalocean_reserved_ip" "host" {
 }
 
 # Docker's data lives here: both databases, every request's Terraform state, images. A rebuilt droplet reattaches it,
-# so nothing is lost. Losing it would orphan every resource users have created.
+# so nothing is lost. Losing it would orphan every resource users have created. It isn't protected from destroy, so a
+# demo tears down cleanly: destroy users' resources from the app before terraform destroy.
 resource "digitalocean_volume" "data" {
   name                    = "${var.name}-data"
   region                  = var.region
   size                    = var.data_volume_size_gb
   initial_filesystem_type = "ext4"
   description             = "Docker data, the checkout and .env for ${var.name}"
-
-  lifecycle {
-    prevent_destroy = true
-  }
 }
 
 resource "digitalocean_droplet" "host" {
