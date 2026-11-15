@@ -17,7 +17,7 @@ Terraform with its own local state, separate from the per-request state the app 
 | Resource | |
 | --- | --- |
 | Droplet | Ubuntu 24.04, `s-2vcpu-4gb` by default, monitoring on, tagged `resource-provisioner-host` (never `resource-provisioner`, which marks users' resources) |
-| Block-storage volume | Mounted at `/mnt/rp-data`. Holds Docker's data (both databases, with **every request's Terraform state** in the app's, images), the checkout and the root-only `.env`. `prevent_destroy`, so Terraform won't delete it. |
+| Block-storage volume | Mounted at `/mnt/rp-data`. Holds Docker's data (both databases, with **every request's Terraform state** in the app's, images), the checkout and the root-only `.env`. Not protected: `terraform destroy` deletes it. |
 | Reserved IP | The hostnames come from it, so they survive the droplet being replaced |
 | Cloud firewall | SSH (22) only from `ssh_allowed_cidrs`; 80 and 443 from anywhere; ICMP |
 | SSH key | Yours, for `root` |
@@ -143,8 +143,9 @@ someone deletes them by their `resource-provisioner` tag.
   in the admin console.
 - **Cloud-init** changes are ignored for the existing droplet (it only runs at first boot); replace the droplet to
   apply one.
-- **Tearing down**: destroy every user's resource from the app first. Then, because the volume is protected, remove
-  its `prevent_destroy` on purpose before `terraform destroy`.
+- **Tearing down**: destroy every user's resource from the app first, then `terraform destroy`. That deletes the
+  volume too, along with the Terraform state for those resources, so anything left behind has to be deleted by its
+  `resource-provisioner` tag.
 
 ## Troubleshooting
 
